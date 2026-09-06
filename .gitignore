@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+
+data/
+chroma_data/
+*.pdf
+__pycache__/
+*.py[cod]
+.venv/
