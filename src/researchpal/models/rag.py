@@ -1,6 +1,6 @@
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class StrictModel(BaseModel):
@@ -32,6 +32,27 @@ class QueryResponse(StrictModel):
 class SearchToolParams(StrictModel):
     query: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=100)
+
+
+class ExtractSectionParams(StrictModel):
+    paper_id: str = Field(min_length=1)
+    section: str
+
+    @field_validator("section")
+    @classmethod
+    def validate_section(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"abstract", "introduction", "conclusion"}:
+            raise ValueError(
+                "section must be one of: abstract, introduction, conclusion"
+            )
+        return normalized
+
+
+class ExtractedSection(StrictModel):
+    paper_id: str
+    section: str
+    text: str
 
 
 T = TypeVar("T")

@@ -2,6 +2,8 @@ from .documents import Document, QueryRequest, QueryResult
 from .rag import (
     AskRequest,
     AskResponse,
+    ExtractedSection,
+    ExtractSectionParams,
     RetrievedDocument,
     QueryResponse,
     SearchToolParams,
@@ -12,6 +14,8 @@ __all__ = [
     "AskRequest",
     "AskResponse",
     "Document",
+    "ExtractedSection",
+    "ExtractSectionParams",
     "QueryRequest",
     "QueryResult",
     "QueryResponse",
