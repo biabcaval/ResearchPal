@@ -1,105 +1,111 @@
 # ResearchPal
 
-Agente de perguntas e respostas para revisão sistemática de literatura.
+Question-and-answer agent for systematic literature review.
 
-## Estrutura
+## Structure
 
-- `researchpal/agent`: recuperação e orquestração da pesquisa.
-- `researchpal/tools`: acesso ao ChromaDB e extração de PDFs.
-- `researchpal/api`: aplicação FastAPI e dependências HTTP.
-- `researchpal/models`: modelos internos do agente e das tools.
-- `researchpal/config`: configurações por ambiente.
-- `researchpal/pipeline`: download, extração e ingestão de PDFs.
+- `researchpal/agent`: search retrieval and orchestration logic.
+- `researchpal/tools`: access to ChromaDB and PDF extraction.
+- `researchpal/api`: FastAPI application and HTTP dependencies.
+- `researchpal/models`: internal agent and tool models.
+- `researchpal/config`: environment configuration.
+- `researchpal/pipeline`: PDF download, extraction, and ingestion.
 
-## Arquitetura
+## Architecture
 
 ```text
-Cliente HTTP
+HTTP client
     |
     v
-FastAPI (/ask) -- validação e serialização HTTP
+FastAPI (/ask) -- HTTP validation and serialization
     |
     v
-GeminiResearchAgent -- decide quando usar cada tool e sintetiza a resposta
+GeminiResearchAgent -- decides when to call each tool and synthesizes the answer
     |                         |
     v                         v
 search_documents        extract_section
     |                         |
     v                         v
-ChromaDB                 PDFs locais
+ChromaDB                 Local PDFs
 ```
 
-Uma **tool** executa uma operação determinística e retorna evidência estruturada:
-`search_documents` consulta ChromaDB e `extract_section` lê uma seção permitida de
-um PDF. O **agente** escolhe as tools via function calling, acumula evidências e
-pede ao Gemini uma síntese em português. A camada HTTP não conhece ChromaDB nem
-cria clientes externos diretamente; suas dependências podem ser substituídas nos
-testes por `app.dependency_overrides`.
+A **tool** executes a deterministic operation and returns structured evidence:
+`search_documents` queries ChromaDB, and `extract_section` reads an allowed section
+from a PDF. The **agent** chooses which tools to call via function calling, gathers
+evidence, and asks Gemini for a synthesis in Portuguese. The HTTP layer does not
+know about ChromaDB and does not create external clients directly; its dependencies
+can be overridden in tests via `app.dependency_overrides`.
 
-## Setup do zero
+## Setup from scratch
 
-Requisitos: Python 3.12+, `uv` e uma chave do Google AI Studio.
+Requirements: Python 3.12+, `uv`, and a Google AI Studio API key.
 
 ```bash
 uv sync --dev
+# Windows
 Copy-Item .env.example .env
-# Edite .env e preencha GEMINI_API_KEY
+# Linux/macOS
+# cp .env.example .env
+# Edit the .env file and set GEMINI_API_KEY
 uv run python ingest.py
 uv run uvicorn app.main:app --reload
 ```
 
-No Linux/macOS, use `cp .env.example .env` no lugar de `Copy-Item`. O entrypoint
-ASGI correto é `app.main:app`; o script de ingestão correto é `ingest.py` na raiz.
-A documentação interativa fica em `http://127.0.0.1:8000/docs`.
+The `uv` equivalent to `pip install -r requirements.txt` is not a different concept;
+it is the correct project workflow for this repository because the project is managed
+with `pyproject.toml` instead of a `requirements.txt` file. The functional equivalent
+is `uv sync --dev`, while running scripts and the API uses `uv run ...`.
+The correct ASGI entrypoint is `app.main:app`, and the ingestion script is
+`ingest.py` in the project root. The interactive API documentation is available at
+`http://127.0.0.1:8000/docs`.
 
 ## API
 
-`POST /ask` aceita somente:
+`POST /ask` accepts only:
 
 ```json
-{"question": "O que os artigos dizem sobre atenção?"}
+{"question": "What do the papers say about attention?"}
 ```
 
-e retorna:
+and returns:
 
 ```json
 {
-  "question": "O que os artigos dizem sobre atenção?",
+  "question": "What do the papers say about attention?",
   "answer": "..."
 }
 ```
 
-Campos desconhecidos ou perguntas vazias retornam `422`. Sem `GEMINI_API_KEY`,
-a inicialização preguiçosa do agente retorna `503`; importar a aplicação não faz
-chamadas de rede ou abre o banco. O Swagger está disponível em `/docs`.
+Unknown fields or empty questions return `422`. Without `GEMINI_API_KEY`, the
+agent's lazy initialization returns `503`; importing the app does not make network
+calls or open the database. Swagger is available at `/docs`.
 
-## Execução e ingestão
+## Ingestion and execution
 
-O pipeline processa exatamente os IDs `1706.03762`, `1810.04805` e `2005.11401`.
-Os PDFs são armazenados em `data/pdfs` e o ChromaDB em `data/chroma` por padrão.
-A ingestão divide cada página em chunks de 1000 caracteres, com sobreposição de
-200 caracteres (`RESEARCHPAL_CHUNK_SIZE` e `RESEARCHPAL_CHUNK_OVERLAP`).
-Os chunks recebem IDs determinísticos (`artigo-página-chunk`), portanto o
-`upsert` é idempotente. PDFs vazios, páginas sem texto e falhas de download
-interrompem a ingestão com erro explícito.
+The pipeline processes exactly these IDs: `1706.03762`, `1810.04805`, and `2005.11401`.
+PDFs are stored in `data/pdfs`, and ChromaDB is stored in `data/chroma` by default.
+The ingestion step splits each page into chunks of 1000 characters with a 200-character
+overlap (`RESEARCHPAL_CHUNK_SIZE` and `RESEARCHPAL_CHUNK_OVERLAP`).
+Chunks receive deterministic IDs (`paper-page-chunk`), which makes the `upsert`
+operation idempotent. Empty PDFs, pages with no text, and download failures stop the
+ingestion process with an explicit error.
 
-## Decisões e limitações
+## Decisions and limitations
 
-O agente usa a biblioteca oficial `google-genai` para function calling e configura
-o modelo por `GEMINI_MODEL`. O agente não mantém memória entre requisições e
-limita o ciclo de function calling a três rodadas. O contrato HTTP é menor que
-o modelo interno do agente: fontes e erros continuam disponíveis internamente
-sem acoplar clientes ao formato de implementação.
+The agent uses the official `google-genai` library for function calling and configures
+its model via `GEMINI_MODEL`. The agent does not retain memory between requests and
+limits the function-calling loop to three rounds. The HTTP contract is smaller than
+the internal agent model: sources and errors remain available internally without
+coupling clients to the implementation format.
 
-A recuperação depende dos PDFs locais já ingeridos, e a qualidade da resposta
-depende do modelo Gemini configurado e da extração textual do PDF. Configure
-`GEMINI_API_KEY` somente no arquivo `.env`; nenhuma chave é armazenada no código
-ou no repositório.
+Retrieval depends on the locally ingested PDFs, and the answer quality depends on the
+configured Gemini model and the PDF text extraction quality. Configure `GEMINI_API_KEY`
+only in the `.env` file; no key is stored in the code or in the repository.
 
-## Testes
+## Tests
 
-Os testes não fazem chamadas externas: ChromaDB, PDFs, rede e cliente Gemini são
-substituídos por mocks.
+The tests do not perform external calls: ChromaDB, PDFs, network access, and the
+Gemini client are all mocked.
 
 ```bash
 uv run pytest

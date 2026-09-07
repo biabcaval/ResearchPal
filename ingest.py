@@ -1,4 +1,8 @@
+import logging
+
 from researchpal.pipeline.ingestion import ingest_papers
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -8,8 +12,9 @@ def main() -> None:
         description="Ingest the three required arXiv papers into ChromaDB."
     ).parse_args()
     identifiers = ingest_papers()
-    print(f"Ingested {len(identifiers)} paper(s): {', '.join(identifiers)}")
+    logger.info("Ingested %s paper(s): %s", len(identifiers), ", ".join(identifiers))
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
     main()
