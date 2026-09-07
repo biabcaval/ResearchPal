@@ -1,10 +1,13 @@
-from fastapi import FastAPI
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
 
 from researchpal.agent import GeminiResearchAgent, ResearchAgent
 from researchpal.config import get_settings
+from researchpal.api.dependencies import get_research_agent
+from researchpal.api.schemas import AskHttpRequest, AskHttpResponse
 from researchpal.models import (
     AskRequest,
-    AskResponse,
     QueryRequest,
     QueryResponse,
 )
@@ -23,15 +26,10 @@ def query(request: QueryRequest) -> QueryResponse:
     return ResearchAgent(settings).store.query(request.question, request.limit)
 
 
-@app.post("/ask", response_model=AskResponse)
-def ask(request: AskRequest) -> AskResponse:
-    try:
-        return GeminiResearchAgent().ask(request)
-    except (RuntimeError, ValueError) as error:
-        return AskResponse(
-            answer="Não foi possível consultar o agente de pesquisa.",
-            sources=[],
-            sections=[],
-            evidence_found=False,
-            tool_errors=[str(error)],
-        )
+@app.post("/ask", response_model=AskHttpResponse)
+def ask(
+    request: AskHttpRequest,
+    agent: Annotated[GeminiResearchAgent, Depends(get_research_agent)],
+) -> AskHttpResponse:
+    result = agent.ask(AskRequest(question=request.question))
+    return AskHttpResponse(question=request.question, answer=result.answer)
