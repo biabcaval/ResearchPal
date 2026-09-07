@@ -19,9 +19,18 @@ class RetrievedDocument(StrictModel):
     distance: float | None = None
 
 
+class ExtractedSection(StrictModel):
+    paper_id: str
+    section: str
+    text: str
+
+
 class AskResponse(StrictModel):
     answer: str
     sources: list[RetrievedDocument]
+    sections: list[ExtractedSection] = Field(default_factory=list)
+    evidence_found: bool
+    tool_errors: list[str] = Field(default_factory=list)
 
 
 class QueryResponse(StrictModel):
@@ -47,12 +56,6 @@ class ExtractSectionParams(StrictModel):
                 "section must be one of: abstract, introduction, conclusion"
             )
         return normalized
-
-
-class ExtractedSection(StrictModel):
-    paper_id: str
-    section: str
-    text: str
 
 
 T = TypeVar("T")

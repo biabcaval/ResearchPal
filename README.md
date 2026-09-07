@@ -35,3 +35,21 @@ Os chunks recebem IDs determinísticos (`artigo-página-chunk`), portanto o
 `upsert` é idempotente ao reexecutar a ingestão. O ChromaDB usa explicitamente
 `DefaultEmbeddingFunction` para indexação e consulta. PDFs vazios, páginas sem
 texto e falhas de download interrompem a ingestão com erro explícito.
+
+## Agente Gemini
+
+O agente usa a biblioteca oficial `google-genai` para integrar o Google AI
+Studio ao Gemini. Ela foi escolhida por oferecer suporte nativo ao SDK atual,
+function calling e configuração explícita das tools. O modelo é configurado
+por `GEMINI_MODEL`; use um modelo atualmente disponível para a sua conta.
+
+O endpoint `/ask` permite que o Gemini decida entre `search_documents` e
+`extract_section`, consolide as evidências retornadas e produza uma resposta
+em português. O agente não mantém memória entre requisições, limita o ciclo de
+function calling a três rodadas e retorna `sources`, `sections`,
+`evidence_found` e `tool_errors`.
+
+Configure `GEMINI_API_KEY` somente no arquivo `.env` e escolha em
+`GEMINI_MODEL` um modelo disponível para sua conta. O valor padrão do projeto
+é `gemini-3.5-flash`. Sem uma chave válida, o endpoint `/ask` retorna erro de
+configuração; nenhuma chave é armazenada no código ou no repositório.
