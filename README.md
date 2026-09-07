@@ -28,3 +28,10 @@ As configurações `RESEARCHPAL_CHROMA_PATH`, `RESEARCHPAL_COLLECTION` e
 `RESEARCHPAL_PDF_DIRECTORY` podem ser definidas por variáveis de ambiente.
 Os PDFs são armazenados em `data/pdfs` e o ChromaDB em `data/chroma` por padrão.
 O pipeline processa exatamente os IDs `1706.03762`, `1810.04805` e `2005.11401`.
+
+A ingestão divide cada página em chunks de 1000 caracteres, com sobreposição de
+200 caracteres (`RESEARCHPAL_CHUNK_SIZE` e `RESEARCHPAL_CHUNK_OVERLAP`).
+Os chunks recebem IDs determinísticos (`artigo-página-chunk`), portanto o
+`upsert` é idempotente ao reexecutar a ingestão. O ChromaDB usa explicitamente
+`DefaultEmbeddingFunction` para indexação e consulta. PDFs vazios, páginas sem
+texto e falhas de download interrompem a ingestão com erro explícito.

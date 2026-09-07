@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypeAlias
 
 import requests
 from PyPDF2 import PdfReader
@@ -7,9 +8,29 @@ from PyPDF2 import PdfReader
 from researchpal.config import REQUIRED_ARXIV_IDS, Settings, get_settings
 from researchpal.tools import VectorStore
 
+Metadata: TypeAlias = dict[str, str | int]
+
 
 def arxiv_pdf_url(paper_id: str) -> str:
     return f"https://arxiv.org/pdf/{paper_id}.pdf"
+
+
+def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
+    """Split text into deterministic character chunks with a fixed overlap."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+    if overlap < 0 or overlap >= chunk_size:
+        raise ValueError("overlap must be non-negative and smaller than chunk_size")
+
+    normalized_text = text.strip()
+    if not normalized_text:
+        return []
+
+    step = chunk_size - overlap
+    return [
+        normalized_text[start : start + chunk_size]
+        for start in range(0, len(normalized_text), step)
+    ]
 
 
 def download_papers(
@@ -22,29 +43,35 @@ def download_papers(
 
     for paper_id in paper_ids:
         local_path = active_settings.pdf_directory / f"{paper_id}.pdf"
-        if not local_path.is_file():
+        if not local_path.is_file() or local_path.stat().st_size == 0:
             temporary_path = local_path.with_suffix(".pdf.part")
-            with requests.get(
-                arxiv_pdf_url(paper_id),
-                stream=True,
-                timeout=active_settings.request_timeout,
-            ) as response:
-                response.raise_for_status()
-                content_type = response.headers.get("content-type", "").split(";")[0]
-                if content_type != "application/pdf":
-                    raise ValueError(f"Expected a PDF from {arxiv_pdf_url(paper_id)}")
-                with temporary_path.open("wb") as pdf_file:
-                    for chunk in response.iter_content(
-                        chunk_size=active_settings.download_chunk_size
-                    ):
-                        if chunk:
-                            pdf_file.write(chunk)
-            temporary_path.replace(local_path)
+            try:
+                with requests.get(
+                    arxiv_pdf_url(paper_id),
+                    stream=True,
+                    timeout=active_settings.request_timeout,
+                ) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "").split(";")[0]
+                    if content_type != "application/pdf":
+                        raise ValueError(f"Expected a PDF from {arxiv_pdf_url(paper_id)}")
+                    with temporary_path.open("wb") as pdf_file:
+                        for chunk in response.iter_content(
+                            chunk_size=active_settings.download_chunk_size
+                        ):
+                            if chunk:
+                                pdf_file.write(chunk)
+                if temporary_path.stat().st_size == 0:
+                    raise ValueError(f"Downloaded an empty PDF for {paper_id}")
+                temporary_path.replace(local_path)
+            except (OSError, requests.RequestException, ValueError) as error:
+                temporary_path.unlink(missing_ok=True)
+                raise RuntimeError(f"Failed to download PDF for {paper_id}") from error
         paper_paths.append(local_path)
     return paper_paths
 
 
-def read_pdf_pages(filepath: Path, paper_id: str) -> list[tuple[str, dict[str, str | int]]]:
+def read_pdf_pages(filepath: Path, paper_id: str) -> list[tuple[str, Metadata]]:
     reader = PdfReader(filepath)
     pages: list[tuple[str, dict[str, str | int]]] = []
     for page_number, page in enumerate(reader.pages, start=1):
@@ -68,15 +95,33 @@ def ingest_papers(
     paper_paths = download_papers(paper_ids, active_settings)
     document_ids: list[str] = []
     documents: list[str] = []
-    metadatas: list[dict[str, str | int]] = []
+    metadatas: list[Metadata] = []
 
     for paper_id, paper_path in zip(paper_ids, paper_paths, strict=True):
-        for page_number, (text, metadata) in enumerate(
-            read_pdf_pages(paper_path, paper_id), start=1
-        ):
-            document_ids.append(f"{paper_id}-page-{page_number}")
-            documents.append(text)
-            metadatas.append(metadata)
+        pages = read_pdf_pages(paper_path, paper_id)
+        if not any(text.strip() for text, _ in pages):
+            raise ValueError(f"PDF contains no extractable text: {paper_id}")
+
+        for page_number, (text, metadata) in enumerate(pages, start=1):
+            chunks = chunk_text(
+                text,
+                chunk_size=active_settings.chunk_size,
+                overlap=active_settings.chunk_overlap,
+            )
+            for chunk_index, chunk in enumerate(chunks):
+                document_ids.append(f"{paper_id}-page-{page_number}-chunk-{chunk_index}")
+                documents.append(chunk)
+                metadatas.append(
+                    {
+                        **metadata,
+                        "chunk_index": chunk_index,
+                        "chunk_size": active_settings.chunk_size,
+                        "chunk_overlap": active_settings.chunk_overlap,
+                    }
+                )
+
+    if not documents:
+        raise ValueError("No non-empty document chunks were produced")
 
     store = VectorStore(active_settings.chroma_path, active_settings.collection_name)
     store.upsert(document_ids, documents, metadatas)
