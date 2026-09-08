@@ -48,7 +48,7 @@ Package layout:
 - `researchpal/config`: environment configuration.
 - `researchpal/pipeline`: PDF download, extraction, and ingestion.
 
-`POST /ask` accepts `{"question": "..."}` and returns `{"question": "...", "answer": "..."}`. Interactive docs are at `http://127.0.0.1:8000/docs`.
+`POST /ask` accepts `{"question": "..."}` and returns `{"question": "...", "answer": "..."}`. Interactive docs are at `http://127.0.0.1:8000/docs`. The Gradio UI (`ui.py`) is a thin HTTP client of that endpoint.
 
 ## Tools vs agent
 
@@ -74,6 +74,14 @@ cp .env.example .env
 uv run python ingest.py
 uv run uvicorn app.main:app --reload
 ```
+
+The Gradio UI is a separate process that calls `POST /ask`. Keep uvicorn running, then in another terminal:
+
+```bash
+uv run python ui.py
+```
+
+Open the URL Gradio prints (usually `http://127.0.0.1:7860`). Each chat message is an independent question. Override the API origin with `RESEARCHPAL_API_URL` (default `http://127.0.0.1:8000`).
 
 On Windows, copy the env file with `Copy-Item .env.example .env`.
 
@@ -161,7 +169,7 @@ Organização do pacote:
 - `researchpal/config`: configuração via ambiente.
 - `researchpal/pipeline`: download, extração e ingestão de PDFs.
 
-`POST /ask` aceita `{"question": "..."}` e devolve `{"question": "...", "answer": "..."}`. A documentação interativa fica em `http://127.0.0.1:8000/docs`.
+`POST /ask` aceita `{"question": "..."}` e devolve `{"question": "...", "answer": "..."}`. A documentação interativa fica em `http://127.0.0.1:8000/docs`. A UI Gradio (`ui.py`) é um cliente HTTP desse endpoint.
 
 ## Distinção entre tools e agente
 
@@ -187,6 +195,14 @@ cp .env.example .env
 uv run python ingest.py
 uv run uvicorn app.main:app --reload
 ```
+
+A UI Gradio é um processo separado que chama `POST /ask`. Com o uvicorn no ar, em outro terminal:
+
+```bash
+uv run python ui.py
+```
+
+Abra a URL que o Gradio imprimir (em geral `http://127.0.0.1:7860`). Cada mensagem do chat é uma pergunta independente. Sobrescreva a origem da API com `RESEARCHPAL_API_URL` (padrão `http://127.0.0.1:8000`).
 
 No Windows, copie o arquivo de ambiente com `Copy-Item .env.example .env`.
 
