@@ -1,8 +1,10 @@
 """HTTP client used by the Gradio UI to call POST /ask."""
 
-from typing import Any
-
 import requests
+from pydantic import ValidationError
+
+from researchpal.api.schemas import AskHttpResponse
+from researchpal.models import AskRequest
 
 
 class ResearchPalUIError(Exception):
@@ -31,7 +33,7 @@ def ask_http(question: str, *, base_url: str, timeout: float) -> str:
     try:
         response = requests.post(
             url,
-            json={"question": stripped},
+            json=AskRequest(question=stripped).model_dump(),
             timeout=timeout,
         )
     except requests.Timeout as error:
@@ -46,18 +48,14 @@ def ask_http(question: str, *, base_url: str, timeout: float) -> str:
             f"API error {response.status_code}: {_response_detail(response)}"
         )
 
-    payload: Any
     try:
         payload = response.json()
-    except ValueError as error:
+        parsed = AskHttpResponse.model_validate(payload)
+    except (ValueError, ValidationError) as error:
         raise ResearchPalUIError(
             "API error: response did not include an answer"
         ) from error
-
-    answer = payload.get("answer") if isinstance(payload, dict) else None
-    if not isinstance(answer, str):
-        raise ResearchPalUIError("API error: response did not include an answer")
-    return answer
+    return parsed.answer
 
 
 def _response_detail(response: requests.Response) -> str:

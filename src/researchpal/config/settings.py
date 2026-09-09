@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,6 +73,21 @@ class Settings(BaseSettings):
             "retrieval_score_threshold",
         ),
     )
+    api_url: str = Field(
+        default="http://127.0.0.1:8000",
+        validation_alias=AliasChoices("RESEARCHPAL_API_URL", "api_url"),
+    )
+    ask_timeout: float = Field(
+        default=180.0,
+        gt=0,
+        validation_alias=AliasChoices("RESEARCHPAL_ASK_TIMEOUT", "ask_timeout"),
+    )
+
+    @field_validator("api_url")
+    @classmethod
+    def normalize_api_url(cls, value: str) -> str:
+        stripped = value.strip()
+        return stripped or "http://127.0.0.1:8000"
 
     @model_validator(mode="after")
     def validate_chunk_overlap(self) -> "Settings":

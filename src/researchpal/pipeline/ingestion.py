@@ -1,14 +1,15 @@
+import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeAlias
 
 import requests
-from PyPDF2 import PdfReader
 
 from researchpal.config import REQUIRED_ARXIV_IDS, Settings, get_settings
+from researchpal.models import ChunkMetadata
 from researchpal.tools import VectorStore
+from researchpal.tools.pdf import read_pdf_pages
 
-Metadata: TypeAlias = dict[str, str | int]
+logger = logging.getLogger(__name__)
 
 
 def arxiv_pdf_url(paper_id: str) -> str:
@@ -66,22 +67,10 @@ def download_papers(
                 temporary_path.replace(local_path)
             except (OSError, requests.RequestException, ValueError) as error:
                 temporary_path.unlink(missing_ok=True)
+                logger.warning("Failed to download PDF for %s: %s", paper_id, error)
                 raise RuntimeError(f"Failed to download PDF for {paper_id}") from error
         paper_paths.append(local_path)
     return paper_paths
-
-
-def read_pdf_pages(filepath: Path, paper_id: str) -> list[tuple[str, Metadata]]:
-    reader = PdfReader(filepath)
-    pages: list[tuple[str, dict[str, str | int]]] = []
-    for page_number, page in enumerate(reader.pages, start=1):
-        pages.append(
-            (
-                page.extract_text() or "",
-                {"paper_id": paper_id, "page": page_number},
-            )
-        )
-    return pages
 
 
 def ingest_papers(
@@ -95,14 +84,14 @@ def ingest_papers(
     paper_paths = download_papers(paper_ids, active_settings)
     document_ids: list[str] = []
     documents: list[str] = []
-    metadatas: list[Metadata] = []
+    metadatas: list[ChunkMetadata] = []
 
     for paper_id, paper_path in zip(paper_ids, paper_paths, strict=True):
         pages = read_pdf_pages(paper_path, paper_id)
         if not any(text.strip() for text, _ in pages):
             raise ValueError(f"PDF contains no extractable text: {paper_id}")
 
-        for page_number, (text, metadata) in enumerate(pages, start=1):
+        for page_number, (text, page_metadata) in enumerate(pages, start=1):
             chunks = chunk_text(
                 text,
                 chunk_size=active_settings.chunk_size,
@@ -112,12 +101,13 @@ def ingest_papers(
                 document_ids.append(f"{paper_id}-page-{page_number}-chunk-{chunk_index}")
                 documents.append(chunk)
                 metadatas.append(
-                    {
-                        **metadata,
-                        "chunk_index": chunk_index,
-                        "chunk_size": active_settings.chunk_size,
-                        "chunk_overlap": active_settings.chunk_overlap,
-                    }
+                    ChunkMetadata(
+                        paper_id=page_metadata.paper_id,
+                        page=page_metadata.page,
+                        chunk_index=chunk_index,
+                        chunk_size=active_settings.chunk_size,
+                        chunk_overlap=active_settings.chunk_overlap,
+                    )
                 )
 
     if not documents:

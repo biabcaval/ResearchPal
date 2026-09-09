@@ -1,11 +1,12 @@
-from .documents import Document, QueryRequest, QueryResult
+from .documents import ChunkMetadata
 from .rag import (
     AskRequest,
     AskResponse,
+    ChromaQueryResult,
     ExtractedSection,
     ExtractSectionParams,
-    RetrievedDocument,
     QueryResponse,
+    RetrievedDocument,
     SearchToolParams,
     ToolResult,
 )
@@ -13,11 +14,10 @@ from .rag import (
 __all__ = [
     "AskRequest",
     "AskResponse",
-    "Document",
-    "ExtractedSection",
+    "ChromaQueryResult",
+    "ChunkMetadata",
     "ExtractSectionParams",
-    "QueryRequest",
-    "QueryResult",
+    "ExtractedSection",
     "QueryResponse",
     "RetrievedDocument",
     "SearchToolParams",

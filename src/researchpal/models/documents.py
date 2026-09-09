@@ -1,25 +1,17 @@
-from typing import Any
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class Document(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class ChunkMetadata(BaseModel):
+    """Page and chunk identifiers stored with each indexed document."""
 
-    identifier: str
-    text: str
+    model_config = ConfigDict(extra="ignore")
 
+    paper_id: str
+    page: int = Field(ge=1)
+    chunk_index: int | None = Field(default=None, ge=0)
+    chunk_size: int | None = Field(default=None, gt=0)
+    chunk_overlap: int | None = Field(default=None, ge=0)
 
-class QueryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(min_length=1)
-    limit: int = Field(default=5, ge=1, le=100)
-
-
-class QueryResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ids: list[list[str]]
-    distances: list[list[float]]
-    raw: dict[str, Any]
+    def to_chroma(self) -> dict[str, str | int]:
+        """Return only the fields Chroma accepts (no null values)."""
+        return {key: value for key, value in self.model_dump().items() if value is not None}

@@ -1,3 +1,4 @@
+import logging
 import re
 
 import chromadb
@@ -11,7 +12,10 @@ from researchpal.models import (
     SearchToolParams,
     ToolResult,
 )
+from researchpal.tools.pdf import read_pdf_pages
 from researchpal.tools.vector_store import VectorStore
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_SECTIONS = frozenset({"abstract", "introduction", "conclusion"})
 SEARCH_DOCUMENTS_DESCRIPTION = (
@@ -46,6 +50,7 @@ def search_documents(
     try:
         documents = active_store.search(params.query, params.limit)
     except (chromadb.errors.ChromaError, RuntimeError, ValueError) as error:
+        logger.warning("Document search failed: %s", error)
         return ToolResult(success=False, error=f"Document search failed: {error}")
     return ToolResult(success=True, data=documents)
 
@@ -78,10 +83,9 @@ def extract_section(
         )
 
     try:
-        from researchpal.pipeline.ingestion import read_pdf_pages
-
         pages = read_pdf_pages(pdf_path, paper_id)
     except (OSError, PdfReadError, ValueError) as error:
+        logger.warning("Failed to read PDF for paper_id %s: %s", paper_id, error)
         return ToolResult(success=False, error=f"Failed to read PDF: {error}")
 
     text = "\n".join(page_text for page_text, _ in pages).strip()

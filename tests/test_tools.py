@@ -1,10 +1,17 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from researchpal.models import ExtractSectionParams, RetrievedDocument, SearchToolParams
-from researchpal.tools.document_tools import extract_section, search_documents
-from researchpal.tools import document_tools
+import pytest
+
 from researchpal.config import Settings
+from researchpal.models import (
+    ChunkMetadata,
+    ExtractSectionParams,
+    RetrievedDocument,
+    SearchToolParams,
+)
+from researchpal.tools import document_tools
+from researchpal.tools.document_tools import extract_section, search_documents
 
 
 def test_search_documents_uses_the_vector_store() -> None:
@@ -36,9 +43,13 @@ def test_extract_section_reads_the_requested_pdf(monkeypatch, tmp_path: Path) ->
         lambda: settings,
     )
     monkeypatch.setattr(
-        "researchpal.pipeline.ingestion.read_pdf_pages",
+        document_tools,
+        "read_pdf_pages",
         lambda path, paper_id: [
-            ("Abstract\nUseful result\nIntroduction\nMore context", {"page": 1})
+            (
+                "Abstract\nUseful result\nIntroduction\nMore context",
+                ChunkMetadata(paper_id=paper_id, page=1),
+            )
         ],
     )
 
@@ -60,3 +71,17 @@ def test_extract_section_rejects_unknown_paper(tmp_path: Path) -> None:
 
     assert result.success is False
     assert result.error == "Unsupported paper_id: unknown"
+
+
+def test_search_documents_logs_vector_store_failures(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = Mock()
+    store.search.side_effect = RuntimeError("chroma is down")
+
+    with caplog.at_level("WARNING", logger="researchpal.tools.document_tools"):
+        result = search_documents(SearchToolParams(query="attention"), store=store)
+
+    assert result.success is False
+    assert "chroma is down" in (result.error or "")
+    assert "Document search failed" in caplog.text

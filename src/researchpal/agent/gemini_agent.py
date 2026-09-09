@@ -1,11 +1,18 @@
+import logging
 from collections.abc import Iterable
-from typing import Any
 
 from google import genai
-from google.genai import types
 from google.genai import errors as genai_errors
+from google.genai import types
 from pydantic import ValidationError
 
+from researchpal.agent.errors import ModelUnavailableError
+from researchpal.agent.gemini_sdk import (
+    GeminiFunctionCall,
+    GeminiGenerateContentResponse,
+    first_candidate,
+    iter_function_calls,
+)
 from researchpal.config import Settings, get_settings
 from researchpal.models import (
     AskRequest,
@@ -16,9 +23,9 @@ from researchpal.models import (
     SearchToolParams,
     ToolResult,
 )
-from researchpal.tools import extract_section, search_documents
-from researchpal.tools import VectorStore
+from researchpal.tools import VectorStore, extract_section, search_documents
 
+logger = logging.getLogger(__name__)
 
 SYSTEM_INSTRUCTION = """
 You are a research assistant for academic papers.
@@ -73,23 +80,25 @@ class GeminiResearchAgent:
 
     def _execute_tool(
         self,
-        name: str,
-        arguments: dict[str, Any],
-    ) -> ToolResult[Any]:
+        call: GeminiFunctionCall,
+    ) -> ToolResult[list[RetrievedDocument] | ExtractedSection]:
         try:
-            if name == "search_documents":
-                params = SearchToolParams.model_validate(arguments)
+            if call.name == "search_documents":
+                params = SearchToolParams.model_validate(call.arguments)
                 return search_documents(params=params, store=self.store)
 
-            if name == "extract_section":
-                params = ExtractSectionParams.model_validate(arguments)
+            if call.name == "extract_section":
+                params = ExtractSectionParams.model_validate(call.arguments)
                 return extract_section(params=params, settings=self.settings)
         except ValidationError as error:
+            logger.warning("Invalid tool arguments for %s: %s", call.name, error)
             return ToolResult(success=False, error=f"Invalid tool arguments: {error}")
         except (OSError, RuntimeError, ValueError) as error:
+            logger.warning("Tool execution failed for %s: %s", call.name, error)
             return ToolResult(success=False, error=f"Tool execution failed: {error}")
 
-        return ToolResult(success=False, error=f"Unknown tool: {name}")
+        logger.warning("Unknown tool requested: %s", call.name)
+        return ToolResult(success=False, error=f"Unknown tool: {call.name}")
 
     def ask(self, request: AskRequest) -> AskResponse:
         contents: list[types.Content] = [
@@ -103,64 +112,101 @@ class GeminiResearchAgent:
         tool_errors: list[str] = []
 
         for _ in range(MAX_TOOL_ROUNDS):
-            try:
-                response = self.client.models.generate_content(
-                    model=self.settings.gemini_model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        tools=[self.document_tools],
-                        temperature=0.0,
-                    ),
-                )
-            except (genai_errors.APIError, genai_errors.ClientError) as error:
-                return self._no_evidence_response(
-                    tool_errors + [f"Gemini request failed: {error}"]
-                )
-            candidate = _first_candidate(response)
+            response = self._generate_with_tools(contents)
+            candidate = first_candidate(response)
             if candidate is None:
                 return self._no_evidence_response(
                     tool_errors + ["Gemini returned no candidate"]
                 )
 
-            function_calls = list(_function_calls(candidate.content.parts))
+            function_calls = list(
+                iter_function_calls(getattr(candidate.content, "parts", None) or [])
+            )
             if not function_calls:
-                answer = (response.text or "").strip()
-                if not answer:
-                    return self._no_evidence_response(
-                        tool_errors + ["Gemini returned an empty answer"]
-                    )
-                return AskResponse(
-                    answer=answer,
-                    sources=_unique_sources(sources),
-                    sections=sections,
-                    evidence_found=bool(sources or sections),
-                    tool_errors=tool_errors,
+                return self._response_from_model_text(
+                    response, sources, sections, tool_errors
                 )
 
             contents.append(candidate.content)
-            tool_response_parts: list[types.Part] = []
-            for function_call in function_calls:
-                name = function_call.name or ""
-                arguments = dict(function_call.args or {})
-                result = self._execute_tool(name, arguments)
-                if result.success and result.data is not None:
-                    if name == "search_documents":
-                        sources.extend(result.data)
-                    elif name == "extract_section":
-                        sections.append(result.data)
-                elif result.error:
-                    tool_errors.append(result.error)
-                tool_response_parts.append(
-                    types.Part.from_function_response(
-                        name=name,
-                        response=result.model_dump(mode="json"),
-                    )
-                )
-            contents.append(
-                types.Content(role="user", parts=tool_response_parts)
+            tool_parts = self._apply_function_calls(
+                function_calls, sources, sections, tool_errors
             )
+            contents.append(types.Content(role="user", parts=tool_parts))
 
+        return self._synthesize_without_tools(contents, sources, sections, tool_errors)
+
+    def _generate_with_tools(
+        self, contents: list[types.Content]
+    ) -> GeminiGenerateContentResponse:
+        try:
+            return self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[self.document_tools],
+                    temperature=0.0,
+                ),
+            )
+        except (genai_errors.APIError, genai_errors.ClientError) as error:
+            logger.warning("Gemini request failed: %s", error)
+            raise ModelUnavailableError(f"Gemini request failed: {error}") from error
+
+    def _response_from_model_text(
+        self,
+        response: GeminiGenerateContentResponse,
+        sources: list[RetrievedDocument],
+        sections: list[ExtractedSection],
+        tool_errors: list[str],
+    ) -> AskResponse:
+        answer = (response.text or "").strip()
+        if not answer:
+            return self._no_evidence_response(
+                tool_errors + ["Gemini returned an empty answer"]
+            )
+        return AskResponse(
+            answer=answer,
+            sources=_unique_sources(sources),
+            sections=sections,
+            evidence_found=bool(sources or sections),
+            tool_errors=tool_errors,
+        )
+
+    def _apply_function_calls(
+        self,
+        function_calls: Iterable[GeminiFunctionCall],
+        sources: list[RetrievedDocument],
+        sections: list[ExtractedSection],
+        tool_errors: list[str],
+    ) -> list[types.Part]:
+        tool_response_parts: list[types.Part] = []
+        for function_call in function_calls:
+            result = self._execute_tool(function_call)
+            if result.success and result.data is not None:
+                data = result.data
+                if function_call.name == "search_documents" and isinstance(data, list):
+                    sources.extend(data)
+                elif function_call.name == "extract_section" and isinstance(
+                    data, ExtractedSection
+                ):
+                    sections.append(data)
+            elif result.error:
+                tool_errors.append(result.error)
+            tool_response_parts.append(
+                types.Part.from_function_response(
+                    name=function_call.name,
+                    response=result.model_dump(mode="json"),
+                )
+            )
+        return tool_response_parts
+
+    def _synthesize_without_tools(
+        self,
+        contents: list[types.Content],
+        sources: list[RetrievedDocument],
+        sections: list[ExtractedSection],
+        tool_errors: list[str],
+    ) -> AskResponse:
         try:
             final_response = self.client.models.generate_content(
                 model=self.settings.gemini_model,
@@ -185,18 +231,21 @@ class GeminiResearchAgent:
                     temperature=0.0,
                 ),
             )
-            answer = (final_response.text or "").strip()
-            if answer:
-                return AskResponse(
-                    answer=answer,
-                    sources=_unique_sources(sources),
-                    sections=sections,
-                    evidence_found=bool(sources or sections),
-                    tool_errors=tool_errors + ["Maximum tool-calling rounds exceeded"],
-                )
         except (genai_errors.APIError, genai_errors.ClientError) as error:
-            tool_errors.append(f"Final Gemini synthesis failed: {error}")
+            logger.warning("Final Gemini synthesis failed: %s", error)
+            raise ModelUnavailableError(
+                f"Final Gemini synthesis failed: {error}"
+            ) from error
 
+        answer = (final_response.text or "").strip()
+        if answer:
+            return AskResponse(
+                answer=answer,
+                sources=_unique_sources(sources),
+                sections=sections,
+                evidence_found=bool(sources or sections),
+                tool_errors=tool_errors + ["Maximum tool-calling rounds exceeded"],
+            )
         return self._no_evidence_response(
             tool_errors + ["Maximum tool-calling rounds exceeded"],
             sources=sources,
@@ -232,18 +281,6 @@ class GeminiResearchAgent:
             evidence_found=False,
             tool_errors=tool_errors,
         )
-
-
-def _first_candidate(response: Any) -> Any | None:
-    candidates = getattr(response, "candidates", None) or []
-    return candidates[0] if candidates else None
-
-
-def _function_calls(parts: Iterable[Any]) -> Iterable[Any]:
-    for part in parts:
-        function_call = getattr(part, "function_call", None)
-        if function_call is not None:
-            yield function_call
 
 
 def _unique_sources(

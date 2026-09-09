@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from researchpal.agent import gemini_agent
 from researchpal.agent.gemini_agent import GeminiResearchAgent
@@ -8,7 +9,7 @@ from researchpal.models import RetrievedDocument
 
 
 class FakeStore:
-    def search(self, question: str, limit: int):
+    def search(self, question: str, limit: int) -> list[RetrievedDocument]:
         return [
             RetrievedDocument(
                 identifier="1706.03762-page-1-chunk-0",
@@ -20,11 +21,11 @@ class FakeStore:
 
 
 class FakeClient:
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self.calls = 0
         self.models = self
 
-    def generate_content(self, **kwargs):
+    def generate_content(self, **kwargs: Any) -> SimpleNamespace:
         self.calls += 1
         if self.calls == 1:
             function_call = SimpleNamespace(

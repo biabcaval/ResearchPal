@@ -2,39 +2,27 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Sequence
 
 import gradio as gr
+from pydantic import ValidationError
 
+from researchpal.config import get_settings
 from researchpal.ui.client import ResearchPalUIError, ask_http
-
-DEFAULT_API_URL = "http://127.0.0.1:8000"
-DEFAULT_ASK_TIMEOUT = 180.0
-
-
-def _api_url() -> str:
-    return os.environ.get("RESEARCHPAL_API_URL", DEFAULT_API_URL).strip() or DEFAULT_API_URL
-
-
-def _ask_timeout() -> float:
-    raw = os.environ.get("RESEARCHPAL_ASK_TIMEOUT", str(DEFAULT_ASK_TIMEOUT))
-    try:
-        timeout = float(raw)
-    except ValueError as error:
-        raise ResearchPalUIError(
-            "RESEARCHPAL_ASK_TIMEOUT must be a number of seconds"
-        ) from error
-    if timeout <= 0:
-        raise ResearchPalUIError("RESEARCHPAL_ASK_TIMEOUT must be greater than zero")
-    return timeout
 
 
 def respond(message: str, history: Sequence[object] | None = None) -> str:
     """Send only the latest user message to `/ask`. History is display-only."""
     _ = history
     try:
-        return ask_http(message, base_url=_api_url(), timeout=_ask_timeout())
+        settings = get_settings()
+        return ask_http(
+            message,
+            base_url=settings.api_url,
+            timeout=settings.ask_timeout,
+        )
+    except ValidationError as error:
+        raise gr.Error(str(error)) from error
     except ResearchPalUIError as error:
         raise gr.Error(str(error)) from error
 

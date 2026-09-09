@@ -45,9 +45,11 @@ def test_ask_http_strips_trailing_slash_from_base_url() -> None:
 
 
 def test_ask_http_does_not_post_when_question_is_empty() -> None:
-    with patch("researchpal.ui.client.requests.post") as post:
-        with pytest.raises(ResearchPalUIError, match="empty"):
-            ask_http("   ", base_url="http://127.0.0.1:8000", timeout=10)
+    with (
+        patch("researchpal.ui.client.requests.post") as post,
+        pytest.raises(ResearchPalUIError, match="empty"),
+    ):
+        ask_http("   ", base_url="http://127.0.0.1:8000", timeout=10)
 
     post.assert_not_called()
 
@@ -56,18 +58,28 @@ def test_ask_http_maps_connection_error() -> None:
     with patch(
         "researchpal.ui.client.requests.post",
         side_effect=requests.ConnectionError("refused"),
-    ):
-        with pytest.raises(ResearchPalUIError, match="uvicorn"):
-            ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
+    ), pytest.raises(ResearchPalUIError, match="uvicorn"):
+        ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
 
 
 def test_ask_http_maps_timeout() -> None:
     with patch(
         "researchpal.ui.client.requests.post",
         side_effect=requests.Timeout("slow"),
+    ), pytest.raises(ResearchPalUIError, match="timed out"):
+        ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
+
+
+def test_ask_http_rejects_response_missing_question() -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"answer": "partial payload"}
+
+    with (
+        patch("researchpal.ui.client.requests.post", return_value=response),
+        pytest.raises(ResearchPalUIError, match="did not include an answer"),
     ):
-        with pytest.raises(ResearchPalUIError, match="timed out"):
-            ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
+        ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
 
 
 def test_ask_http_maps_503_detail() -> None:
@@ -76,6 +88,8 @@ def test_ask_http_maps_503_detail() -> None:
     response.json.return_value = {"detail": "GEMINI_API_KEY is not configured"}
     response.text = "ignored"
 
-    with patch("researchpal.ui.client.requests.post", return_value=response):
-        with pytest.raises(ResearchPalUIError, match="API error 503: GEMINI_API_KEY"):
-            ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
+    with (
+        patch("researchpal.ui.client.requests.post", return_value=response),
+        pytest.raises(ResearchPalUIError, match="API error 503: GEMINI_API_KEY"),
+    ):
+        ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)

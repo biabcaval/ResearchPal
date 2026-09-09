@@ -1,12 +1,12 @@
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class AskHttpRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    question: str = Field(min_length=1)
+from pydantic import BaseModel, ConfigDict
 
 
 class AskHttpResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str
     answer: str
+
+
+class HealthResponse(BaseModel):
+    status: str

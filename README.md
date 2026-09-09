@@ -110,7 +110,7 @@ uv run pytest
 - Section extraction is heading-regex based (`abstract` / `introduction` / `conclusion`) and can miss papers with unusual headings.
 - The agent has no memory across requests and stops calling tools after three rounds.
 - Retrieval quality is bounded by MiniLM embeddings, chunk size, and `RESEARCHPAL_RETRIEVAL_LIMIT` (default 5). There is no hybrid BM25 + vector search.
-- The public HTTP contract returns only `question` and `answer`; sources and tool errors exist internally but are not exposed to clients.
+- The public HTTP contract returns only `question` and `answer`; sources and tool errors exist internally but are not exposed to clients. Gemini failures (429 quota, 503 overload) are the exception: they return HTTP `503` with the upstream reason instead of an answer, so a quota problem is never disguised as missing evidence.
 - `GEMINI_API_KEY` is required at request time (`503` if missing). Importing the app does not open the network or the database.
 
 ---
@@ -231,5 +231,5 @@ uv run pytest
 - A extração de seções usa regex de headings (`abstract` / `introduction` / `conclusion`) e pode falhar em artigos com títulos atípicos.
 - O agente não tem memória entre requisições e para de chamar tools após três rodadas.
 - A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e por `RESEARCHPAL_RETRIEVAL_LIMIT` (padrão 5). Não há busca híbrida BM25 + vetorial.
-- O contrato HTTP público devolve só `question` e `answer`; fontes e erros de tools existem internamente, mas não são expostos ao cliente.
+- O contrato HTTP público devolve só `question` e `answer`; fontes e erros de tools existem internamente, mas não são expostos ao cliente. As falhas do Gemini (429 de cota, 503 de sobrecarga) são a exceção: devolvem HTTP `503` com o motivo original, para que um problema de cota nunca seja confundido com falta de evidência.
 - `GEMINI_API_KEY` é obrigatória na hora da requisição (`503` se estiver ausente). Importar a aplicação não abre a rede nem o banco.
