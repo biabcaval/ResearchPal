@@ -20,8 +20,9 @@ ResearchPal is a local RAG service: an HTTP API receives a question, a Gemini ag
                                  v
                     ┌─────────────────────────┐
                     │   GeminiResearchAgent   │
-                    │  google-genai function  │
-                    │  calling (max 3 rounds) │
+                    │  LangChain create_agent │
+                    │  native Gemini FC       │
+                    │  (max 3 rounds)         │
                     └──────┬──────────┬───────┘
            search_documents│          │extract_section
                            v          v
@@ -41,7 +42,7 @@ ResearchPal is a local RAG service: an HTTP API receives a question, a Gemini ag
 
 Package layout:
 
-- `researchpal/agent`: Gemini orchestration and function-calling loop.
+- `researchpal/agent`: LangChain Gemini agent and native function calling.
 - `researchpal/tools`: ChromaDB search and PDF section extraction.
 - `researchpal/api`: FastAPI application and HTTP dependencies.
 - `researchpal/models`: internal request, tool, and RAG models.
@@ -52,12 +53,12 @@ Package layout:
 
 ## Tools vs agent
 
-**Tools** are deterministic, stateless functions. They do not choose a workflow and they do not generate prose. Each tool takes validated parameters, talks to one data source, and returns a structured `ToolResult`:
+**Tools** are deterministic, stateless classes. They do not choose a workflow and they do not generate prose. Each tool takes validated parameters, talks to one data source, and returns a structured `ToolResult`:
 
 - `search_documents`: semantic query against ChromaDB chunks.
 - `extract_section`: reads a local PDF and returns only `abstract`, `introduction`, or `conclusion`.
 
-**The agent** (`GeminiResearchAgent`) is the decision layer. It receives the user question, exposes the tools to Gemini via function declarations, executes the calls Gemini requests, and asks the model to synthesize a Portuguese answer from the collected evidence. It never invents citations or paper content; if tools return nothing, it says there is not enough evidence.
+**The agent** (`GeminiResearchAgent`) is the decision layer. It receives the user question, exposes the tools to Gemini through LangChain `StructuredTool` adapters (native function calling, not ReAct), executes the calls Gemini requests, and asks the model to synthesize a Portuguese answer from the collected evidence. It never invents citations or paper content; if tools return nothing, it says there is not enough evidence.
 
 This split exists so retrieval stays testable and replaceable (ChromaDB and PDFs can be mocked) while the LLM only reasons over tool output. The HTTP layer does not open ChromaDB or Gemini itself; FastAPI dependencies can be overridden in tests.
 
@@ -101,7 +102,7 @@ uv run pytest
 
 **Embedding model — English MiniLM, Portuguese answers.** The store uses Chroma's default ONNX MiniLM encoder (`all-MiniLM-L6-v2`). Papers stay in English. `search_documents` rewrites the question into an English search query so comparison is English-to-English, then Gemini answers in Portuguese (the evaluation language). English questions are also rewritten into a retrieval query; the user-facing answer stays in Portuguese. Re-run `ingest.py` after this encoder change if the collection was built with multilingual MiniLM.
 
-**LLM — official `google-genai` SDK, default `gemini-3.5-flash`.** Function calling is implemented with `google-genai` (`>=1.0.0`), not a third-party agent framework, so tool schemas stay aligned with Pydantic models. Flash is the default for latency and cost on a three-paper corpus; the name is configurable via `GEMINI_MODEL`. Temperature is `0.0` and the tool loop is capped at three rounds.
+**LLM — LangChain + Gemini 3.5 Flash.** The agent uses `langchain` `create_agent` with `langchain-google-genai` (`ChatGoogleGenerativeAI`) so Gemini native function calling drives `search_documents` and `extract_section`. LangChain is the LLM/tool-calling layer only — not document loaders, embeddings, or the Chroma retriever. ReAct is rejected because the challenge requires native function calling. Default model is `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash is unavailable. Temperature is `0.0`. `ModelCallLimitMiddleware(run_limit=3)` caps tool-enabled calls, then one tool-free synthesis call. `google-genai` remains for the English query rewriter.
 
 ## Known limitations
 
@@ -141,8 +142,9 @@ O ResearchPal é um serviço RAG local: a API HTTP recebe a pergunta, um agente 
                                  v
                     ┌─────────────────────────┐
                     │   GeminiResearchAgent   │
-                    │  function calling       │
-                    │  google-genai (máx. 3)  │
+                    │  LangChain create_agent │
+                    │  function calling nativo│
+                    │  Gemini (máx. 3)        │
                     └──────┬──────────┬───────┘
            search_documents│          │extract_section
                            v          v
@@ -163,7 +165,7 @@ O ResearchPal é um serviço RAG local: a API HTTP recebe a pergunta, um agente 
 
 Organização do pacote:
 
-- `researchpal/agent`: orquestração Gemini e loop de function calling.
+- `researchpal/agent`: agente LangChain Gemini e function calling nativo.
 - `researchpal/tools`: busca no ChromaDB e extração de seções do PDF.
 - `researchpal/api`: aplicação FastAPI e dependências HTTP.
 - `researchpal/models`: modelos internos de request, tools e RAG.
@@ -174,12 +176,12 @@ Organização do pacote:
 
 ## Distinção entre tools e agente
 
-**Tools** são funções determinísticas e sem estado. Elas não escolhem o fluxo e não geram prosa. Cada uma recebe parâmetros validados, acessa uma única fonte de dados e devolve um `ToolResult` estruturado:
+**Tools** são classes determinísticas e sem estado. Elas não escolhem o fluxo e não geram prosa. Cada uma recebe parâmetros validados, acessa uma única fonte de dados e devolve um `ToolResult` estruturado:
 
 - `search_documents`: consulta semântica nos chunks do ChromaDB.
 - `extract_section`: lê um PDF local e devolve somente `abstract`, `introduction` ou `conclusion`.
 
-**O agente** (`GeminiResearchAgent`) é a camada de decisão. Ele recebe a pergunta, expõe as tools ao Gemini via function declarations, executa as chamadas pedidas pelo modelo e pede uma síntese em português a partir da evidência coletada. Não inventa citações nem conteúdo dos artigos; se as tools não devolverem evidência, declara que não há base suficiente.
+**O agente** (`GeminiResearchAgent`) é a camada de decisão. Ele recebe a pergunta, expõe as tools via adapters `StructuredTool` do LangChain (function calling nativo, não ReAct), executa as chamadas pedidas pelo modelo e pede uma síntese em português a partir da evidência coletada. Não inventa citações nem conteúdo dos artigos; se as tools não devolverem evidência, declara que não há base suficiente.
 
 Essa separação existe para que a recuperação continue testável e substituível (ChromaDB e PDFs podem ser mockados), enquanto o LLM raciocina só sobre a saída das tools. A camada HTTP não abre o ChromaDB nem o Gemini; as dependências do FastAPI podem ser substituídas nos testes.
 
@@ -223,7 +225,7 @@ uv run pytest
 
 **Modelo de embedding — MiniLM inglês, respostas em português.** O store usa o encoder ONNX MiniLM padrão do Chroma (`all-MiniLM-L6-v2`). Os artigos permanecem em inglês. `search_documents` reescreve a pergunta como uma query de busca em inglês para a comparação ser inglês-com-inglês; o Gemini responde em português (a língua da avaliação). Perguntas já em inglês também são reescritas para retrieval; a resposta ao usuário continua em português. Rode `ingest.py` de novo se a collection foi criada com MiniLM multilingual.
 
-**LLM — SDK oficial `google-genai`, padrão `gemini-3.5-flash`.** O function calling usa `google-genai` (`>=1.0.0`), sem um framework de agentes de terceiros, para manter os schemas das tools alinhados aos modelos Pydantic. Flash é o padrão por latência e custo em um corpus de três artigos; o nome é configurável em `GEMINI_MODEL`. A temperatura é `0.0` e o loop de tools tem no máximo três rodadas.
+**LLM — LangChain + Gemini 3.5 Flash.** O agente usa `langchain` `create_agent` com `langchain-google-genai` (`ChatGoogleGenerativeAI`) para o function calling nativo do Gemini acionar `search_documents` e `extract_section`. LangChain é só a camada LLM/tools — não loaders, embeddings nem o retriever do Chroma. ReAct foi rejeitado porque o desafio pede function calling nativo. O modelo padrão é `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash não está disponível. Temperatura `0.0`. `ModelCallLimitMiddleware(run_limit=3)` limita as chamadas com tools; depois há uma síntese sem tools. `google-genai` permanece na reescrita da query para inglês.
 
 ## Limitações conhecidas
 
