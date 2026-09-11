@@ -78,7 +78,7 @@ Se perguntarem “é um RAG?”, responda: **sim, RAG clássico retrieve-then-ge
 | `models` | Contratos internos: request, tools, RAG, metadados |
 | `pipeline` | Download, chunk, upsert |
 | `tools` | Funções determinísticas: busca e extração |
-| `agent` | Loop Gemini + adapters do SDK |
+| `agent` | LangChain `create_agent` + function calling nativo |
 | `api` | FastAPI, schemas HTTP, DI |
 | `ui` | Gradio + cliente `requests` |
 
@@ -253,7 +253,7 @@ Por quê: UI simples; não vazar erros de tool e IDs internos por padrão. Custo
 | Params de tool | `SearchToolParams`, `ExtractSectionParams` | forbid |
 | Payload Chroma | `ChromaQueryResult` | **ignore** + `None` → `[]` |
 | Metadado chunk | `ChunkMetadata` | ignore; `to_chroma()` **remove nulls** (Chroma não aceita null) |
-| LangChain messages + `ToolResult` JSON | Protocols + `GeminiFunctionCall` | adapter em `gemini_sdk.py` |
+| LangChain messages + `ToolResult` JSON | `HumanMessage` / `AIMessage` / `ToolMessage` + `ToolResult[T]` | `StructuredTool` via `as_langchain_tool()` |
 
 Se metadado do Chroma for inválido: fallback `paper_id=identifier, page=1` + warning — degradação, não crash na busca.
 
