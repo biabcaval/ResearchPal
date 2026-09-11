@@ -50,12 +50,12 @@ class Settings(BaseSettings):
         ),
     )
     chunk_size: int = Field(
-        default=1000,
+        default=256,
         gt=0,
         validation_alias=AliasChoices("RESEARCHPAL_CHUNK_SIZE", "chunk_size"),
     )
     chunk_overlap: int = Field(
-        default=200,
+        default=32,
         ge=0,
         validation_alias=AliasChoices("RESEARCHPAL_CHUNK_OVERLAP", "chunk_overlap"),
     )

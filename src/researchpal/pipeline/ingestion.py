@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import requests
+import tiktoken
 
 from researchpal.config import REQUIRED_ARXIV_IDS, Settings, get_settings
 from researchpal.models import ChunkMetadata
@@ -11,13 +12,19 @@ from researchpal.tools.pdf import read_pdf_pages
 
 logger = logging.getLogger(__name__)
 
+TOKEN_ENCODING = "cl100k_base"
+
 
 def arxiv_pdf_url(paper_id: str) -> str:
     return f"https://arxiv.org/pdf/{paper_id}.pdf"
 
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
-    """Split text into deterministic character chunks with a fixed overlap."""
+def chunk_text(text: str, chunk_size: int = 256, overlap: int = 32) -> list[str]:
+    """Split text into deterministic token windows with a fixed overlap.
+
+    Windows are measured in `tiktoken` `cl100k_base` tokens, not characters,
+    so chunk size stays aligned with what embedding models actually consume.
+    """
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
     if overlap < 0 or overlap >= chunk_size:
@@ -27,10 +34,15 @@ def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[st
     if not normalized_text:
         return []
 
+    encoding = tiktoken.get_encoding(TOKEN_ENCODING)
+    tokens = encoding.encode(normalized_text)
+    if not tokens:
+        return []
+
     step = chunk_size - overlap
     return [
-        normalized_text[start : start + chunk_size]
-        for start in range(0, len(normalized_text), step)
+        encoding.decode(tokens[start : start + chunk_size])
+        for start in range(0, len(tokens), step)
     ]
 
 
@@ -113,6 +125,10 @@ def ingest_papers(
     if not documents:
         raise ValueError("No non-empty document chunks were produced")
 
-    store = VectorStore(active_settings.chroma_path, active_settings.collection_name)
+    store = VectorStore(
+        active_settings.chroma_path,
+        active_settings.collection_name,
+        rebuild_incompatible_collection=True,
+    )
     store.upsert(document_ids, documents, metadatas)
     return list(paper_ids)

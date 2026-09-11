@@ -38,10 +38,14 @@ def test_ask_endpoint_uses_injected_agent_without_external_calls() -> None:
 
 
 def test_ask_endpoint_rejects_extra_fields() -> None:
-    response = TestClient(app).post(
-        "/ask",
-        json={"question": "pergunta", "limit": 5},
-    )
+    app.dependency_overrides[get_research_agent] = lambda: FakeAgent()
+    try:
+        response = TestClient(app).post(
+            "/ask",
+            json={"question": "pergunta", "limit": 5},
+        )
+    finally:
+        app.dependency_overrides.clear()
 
     assert response.status_code == 422
 

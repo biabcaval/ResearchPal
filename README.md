@@ -35,7 +35,7 @@ ResearchPal is a local RAG service: an HTTP API receives a question, a Gemini ag
                  │ Ingestion pipeline│
                  │ arXiv → PDF text  │
                  │ → overlapping     │
-                 │   character chunks│
+                 │   token chunks    │
                  └───────────────────┘
 ```
 
@@ -85,7 +85,7 @@ Open the URL Gradio prints (usually `http://127.0.0.1:7860`). Each chat message 
 
 On Windows, copy the env file with `Copy-Item .env.example .env`.
 
-`uv run` is the supported way to execute project scripts and the API inside the synced environment. Ingestion downloads exactly three arXiv PDFs (`1706.03762`, `1810.04805`, `2005.11401`) into `data/pdfs` and upserts chunks into `data/chroma`.
+`uv run` is the supported way to execute project scripts and the API inside the synced environment. Ingestion downloads exactly three arXiv PDFs (`1706.03762`, `1810.04805`, `2005.11401`) into `data/pdfs` and upserts chunks into `data/chroma`. Re-run ingestion after changing the embedding model so Chroma does not keep vectors from a previous encoder.
 
 Run tests (no network, no real ChromaDB, no Gemini):
 
@@ -97,9 +97,9 @@ uv run pytest
 
 **Vector store — ChromaDB (persistent client).** The corpus is three papers on disk, so an embedded store under `data/chroma` avoids operating a separate database. Persistence means ingestion is a one-shot CLI (`ingest.py`) and the API only reads the same collection. Chunk IDs are deterministic (`{paper_id}-page-{n}-chunk-{i}`), so `upsert` is idempotent and re-running ingestion overwrites the same documents.
 
-**Chunking — fixed-size character windows with overlap.** Each PDF page is split into 1000-character chunks with 200-character overlap (`RESEARCHPAL_CHUNK_SIZE` / `RESEARCHPAL_CHUNK_OVERLAP`). Character windows are deterministic (no tokenizer dependency), overlap preserves sentences that straddle a cut, and page metadata stays attached to every chunk for citations. Empty PDFs, pages with no extractable text, and download failures abort ingestion with an explicit error.
+**Chunking — fixed-size token windows with overlap.** Each PDF page is split into 256-token chunks with 32-token overlap (`RESEARCHPAL_CHUNK_SIZE` / `RESEARCHPAL_CHUNK_OVERLAP`) using `tiktoken` `cl100k_base`. Token windows match how embedding models budget context (MiniLM is ~256 tokens), overlap preserves sentences that straddle a cut, and page metadata stays attached to every chunk for citations. Empty PDFs, pages with no extractable text, and download failures abort ingestion with an explicit error.
 
-**Embedding model — Chroma `DefaultEmbeddingFunction`.** The store uses Chroma's default ONNX MiniLM encoder (`all-MiniLM-L6-v2`) rather than a remote embedding API. Indexing stays offline after PDF download, embeddings stay consistent between ingest and query, and there is no extra Google quota for vectors. The trade-off is a smaller English-oriented sentence model compared with larger Gemini embeddings.
+**Embedding model — English MiniLM, Portuguese answers.** The store uses Chroma's default ONNX MiniLM encoder (`all-MiniLM-L6-v2`). Papers stay in English. `search_documents` rewrites the question into an English search query so comparison is English-to-English, then Gemini answers in Portuguese (the evaluation language). English questions are also rewritten into a retrieval query; the user-facing answer stays in Portuguese. Re-run `ingest.py` after this encoder change if the collection was built with multilingual MiniLM.
 
 **LLM — official `google-genai` SDK, default `gemini-3.5-flash`.** Function calling is implemented with `google-genai` (`>=1.0.0`), not a third-party agent framework, so tool schemas stay aligned with Pydantic models. Flash is the default for latency and cost on a three-paper corpus; the name is configurable via `GEMINI_MODEL`. Temperature is `0.0` and the tool loop is capped at three rounds.
 
@@ -109,7 +109,7 @@ uv run pytest
 - Answers depend on PyPDF2 text extraction; layout, figures, and equations are not recovered as structured content.
 - Section extraction is heading-regex based (`abstract` / `introduction` / `conclusion`) and can miss papers with unusual headings.
 - The agent has no memory across requests and stops calling tools after three rounds.
-- Retrieval quality is bounded by MiniLM embeddings, chunk size, and `RESEARCHPAL_RETRIEVAL_LIMIT` (default 5). There is no hybrid BM25 + vector search.
+- Retrieval quality is bounded by MiniLM embeddings, chunk size, and `RESEARCHPAL_RETRIEVAL_LIMIT` (default 5). There is no hybrid BM25 + vector search. If the English query rewrite fails, search falls back to the original question and recall can drop.
 - The public HTTP contract returns only `question` and `answer`; sources and tool errors exist internally but are not exposed to clients. Gemini failures (429 quota, 503 overload) are the exception: they return HTTP `503` with the upstream reason instead of an answer, so a quota problem is never disguised as missing evidence.
 - `GEMINI_API_KEY` is required at request time (`503` if missing). Importing the app does not open the network or the database.
 
@@ -155,7 +155,8 @@ O ResearchPal é um serviço RAG local: a API HTTP recebe a pergunta, um agente 
                  ┌─────────┴─────────┐
                  │ Pipeline de ingestão│
                  │ arXiv → texto PDF │
-                 │ → chunks com      │
+                 │ → chunks de       │
+                 │   tokens com      │
                  │   sobreposição    │
                  └───────────────────┘
 ```
@@ -206,7 +207,7 @@ Abra a URL que o Gradio imprimir (em geral `http://127.0.0.1:7860`). Cada mensag
 
 No Windows, copie o arquivo de ambiente com `Copy-Item .env.example .env`.
 
-`uv run` é a forma suportada de executar scripts e a API no ambiente sincronizado. A ingestão baixa exatamente três PDFs do arXiv (`1706.03762`, `1810.04805`, `2005.11401`) em `data/pdfs` e faz upsert dos chunks em `data/chroma`.
+`uv run` é a forma suportada de executar scripts e a API no ambiente sincronizado. A ingestão baixa exatamente três PDFs do arXiv (`1706.03762`, `1810.04805`, `2005.11401`) em `data/pdfs` e faz upsert dos chunks em `data/chroma`. Reexecute a ingestão depois de trocar o modelo de embedding para o Chroma não manter vetores de um encoder anterior.
 
 Testes (sem rede, sem ChromaDB real, sem Gemini):
 
@@ -218,9 +219,9 @@ uv run pytest
 
 **Vector store — ChromaDB (cliente persistente).** O corpus são três artigos em disco, então um store embutido em `data/chroma` evita operar um banco separado. A persistência faz da ingestão um CLI único (`ingest.py`) e a API só lê a mesma collection. Os IDs dos chunks são determinísticos (`{paper_id}-page-{n}-chunk-{i}`), então o `upsert` é idempotente e reexecutar a ingestão sobrescreve os mesmos documentos.
 
-**Chunking — janelas de caracteres com sobreposição.** Cada página do PDF é dividida em chunks de 1000 caracteres com sobreposição de 200 (`RESEARCHPAL_CHUNK_SIZE` / `RESEARCHPAL_CHUNK_OVERLAP`). Janelas por caractere são determinísticas (sem dependência de tokenizer), a sobreposição preserva frases cortadas no limite, e os metadados de página permanecem em cada chunk para citação. PDFs vazios, páginas sem texto extraível e falhas de download interrompem a ingestão com erro explícito.
+**Chunking — janelas de tokens com sobreposição.** Cada página do PDF é dividida em chunks de 256 tokens com sobreposição de 32 (`RESEARCHPAL_CHUNK_SIZE` / `RESEARCHPAL_CHUNK_OVERLAP`) usando `tiktoken` `cl100k_base`. Janelas em tokens acompanham o orçamento dos embeddings (MiniLM ~256 tokens), a sobreposição preserva frases cortadas no limite, e os metadados de página permanecem em cada chunk para citação. PDFs vazios, páginas sem texto extraível e falhas de download interrompem a ingestão com erro explícito.
 
-**Modelo de embedding — `DefaultEmbeddingFunction` do Chroma.** O store usa o encoder ONNX MiniLM padrão do Chroma (`all-MiniLM-L6-v2`), não uma API remota de embeddings. A indexação permanece offline depois do download dos PDFs, os vetores ficam consistentes entre ingestão e consulta, e não há cota extra do Google para embeddings. O custo é um modelo de sentença menor e voltado a inglês, em comparação com embeddings maiores do Gemini.
+**Modelo de embedding — MiniLM inglês, respostas em português.** O store usa o encoder ONNX MiniLM padrão do Chroma (`all-MiniLM-L6-v2`). Os artigos permanecem em inglês. `search_documents` reescreve a pergunta como uma query de busca em inglês para a comparação ser inglês-com-inglês; o Gemini responde em português (a língua da avaliação). Perguntas já em inglês também são reescritas para retrieval; a resposta ao usuário continua em português. Rode `ingest.py` de novo se a collection foi criada com MiniLM multilingual.
 
 **LLM — SDK oficial `google-genai`, padrão `gemini-3.5-flash`.** O function calling usa `google-genai` (`>=1.0.0`), sem um framework de agentes de terceiros, para manter os schemas das tools alinhados aos modelos Pydantic. Flash é o padrão por latência e custo em um corpus de três artigos; o nome é configurável em `GEMINI_MODEL`. A temperatura é `0.0` e o loop de tools tem no máximo três rodadas.
 
@@ -230,6 +231,6 @@ uv run pytest
 - As respostas dependem da extração de texto do PyPDF2; layout, figuras e equações não são recuperados como conteúdo estruturado.
 - A extração de seções usa regex de headings (`abstract` / `introduction` / `conclusion`) e pode falhar em artigos com títulos atípicos.
 - O agente não tem memória entre requisições e para de chamar tools após três rodadas.
-- A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e por `RESEARCHPAL_RETRIEVAL_LIMIT` (padrão 5). Não há busca híbrida BM25 + vetorial.
+- A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e por `RESEARCHPAL_RETRIEVAL_LIMIT` (padrão 5). Não há busca híbrida BM25 + vetorial. Se a reescrita da query para inglês falhar, a busca cai na pergunta original e o recall pode cair.
 - O contrato HTTP público devolve só `question` e `answer`; fontes e erros de tools existem internamente, mas não são expostos ao cliente. As falhas do Gemini (429 de cota, 503 de sobrecarga) são a exceção: devolvem HTTP `503` com o motivo original, para que um problema de cota nunca seja confundido com falta de evidência.
 - `GEMINI_API_KEY` é obrigatória na hora da requisição (`503` se estiver ausente). Importar a aplicação não abre a rede nem o banco.

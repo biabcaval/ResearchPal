@@ -5,7 +5,6 @@ from typing import Protocol
 
 import chromadb
 from chromadb.api.types import EmbeddingFunction
-from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 from pydantic import ValidationError
 
 from researchpal.models import (
@@ -14,6 +13,7 @@ from researchpal.models import (
     QueryResponse,
     RetrievedDocument,
 )
+from researchpal.tools.embeddings import paper_embedding_function
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +38,66 @@ class VectorStore:
         collection_name: str = "papers",
         embedding_function: EmbeddingFunction | None = None,
         collection: VectorCollection | None = None,
+        rebuild_incompatible_collection: bool = False,
     ) -> None:
         if collection is not None:
             self.collection = collection
             return
 
         self.client = chromadb.PersistentClient(path=str(path))
-        self.embedding_function = embedding_function or DefaultEmbeddingFunction()
-        self.collection = self.client.get_or_create_collection(
+        self.embedding_function = embedding_function or paper_embedding_function()
+        self.collection = self._get_or_create_collection(
+            collection_name,
+            rebuild_incompatible_collection=rebuild_incompatible_collection,
+        )
+
+    def _get_or_create_collection(
+        self,
+        collection_name: str,
+        *,
+        rebuild_incompatible_collection: bool,
+    ) -> VectorCollection:
+        """Open the collection, optionally replacing one built with another encoder."""
+        try:
+            collection = self.client.get_or_create_collection(
+                name=collection_name,
+                embedding_function=self.embedding_function,
+            )
+        except ValueError as error:
+            if not _is_embedding_function_conflict(error):
+                raise
+            return self._rebuild_or_raise(
+                collection_name,
+                rebuild_incompatible_collection,
+                error,
+            )
+
+        if _encoder_names_differ(collection, self.embedding_function):
+            return self._rebuild_or_raise(
+                collection_name,
+                rebuild_incompatible_collection,
+                None,
+            )
+        return collection
+
+    def _rebuild_or_raise(
+        self,
+        collection_name: str,
+        rebuild_incompatible_collection: bool,
+        error: ValueError | None,
+    ) -> VectorCollection:
+        """Delete and recreate the collection, or tell the caller to re-ingest."""
+        if not rebuild_incompatible_collection:
+            raise RuntimeError(
+                "The Chroma collection was indexed with a different embedding "
+                "function. Re-run `uv run python ingest.py` to rebuild the index."
+            ) from error
+        logger.warning(
+            "Replacing collection %s after embedding-function change",
+            collection_name,
+        )
+        self.client.delete_collection(collection_name)
+        return self.client.get_or_create_collection(
             name=collection_name,
             embedding_function=self.embedding_function,
         )
@@ -111,3 +163,50 @@ def _chunk_metadata(identifier: str, metadata: object) -> ChunkMetadata:
             identifier,
         )
         return ChunkMetadata(paper_id=identifier, page=1)
+
+
+def _is_embedding_function_conflict(error: ValueError) -> bool:
+    """Return True when Chroma rejected a collection because the encoder changed."""
+    return "embedding function conflict" in str(error).lower()
+
+
+def _encoder_names_differ(collection: object, embedding_function: object) -> bool:
+    """Return True when the open collection was built with another encoder name.
+
+    Chroma skips the conflict check when the new function is named ``default``,
+    so switching back from sentence-transformers MiniLM would otherwise mix
+    384-d vectors from two different spaces.
+    """
+    persisted = _persisted_embedding_name(collection)
+    current = _embedding_function_name(embedding_function)
+    if persisted is None or current is None:
+        return False
+    return persisted != current
+
+
+def _persisted_embedding_name(collection: object) -> str | None:
+    """Read the encoder name stored on a Chroma collection, if present."""
+    config = getattr(collection, "configuration_json", None)
+    if config is None:
+        configuration = getattr(collection, "configuration", None)
+        if isinstance(configuration, dict):
+            config = configuration
+        else:
+            model = getattr(collection, "_model", None)
+            config = getattr(model, "configuration_json", None) if model is not None else None
+    if not isinstance(config, dict):
+        return None
+    embedding = config.get("embedding_function")
+    if not isinstance(embedding, dict):
+        return None
+    name = embedding.get("name")
+    return name if isinstance(name, str) and name else None
+
+
+def _embedding_function_name(embedding_function: object) -> str | None:
+    """Return the Chroma encoder name, or None when the object has no name()."""
+    name = getattr(embedding_function, "name", None)
+    if not callable(name):
+        return None
+    resolved = name()
+    return resolved if isinstance(resolved, str) and resolved else None

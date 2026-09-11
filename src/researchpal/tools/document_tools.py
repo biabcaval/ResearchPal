@@ -12,6 +12,7 @@ from researchpal.models import (
     SearchToolParams,
     ToolResult,
 )
+from researchpal.tools.english_retrieval import to_english_retrieval_query
 from researchpal.tools.pdf import read_pdf_pages
 from researchpal.tools.vector_store import VectorStore
 
@@ -20,7 +21,8 @@ logger = logging.getLogger(__name__)
 ALLOWED_SECTIONS = frozenset({"abstract", "introduction", "conclusion"})
 SEARCH_DOCUMENTS_DESCRIPTION = (
     "Search indexed paper chunks semantically by query and return the most relevant "
-    "documents up to the requested limit."
+    "documents up to the requested limit. The index is English, so the query is "
+    "rewritten to English before comparison. Answers to the user stay in Portuguese."
 )
 EXTRACT_SECTION_DESCRIPTION = (
     "Extract the abstract, introduction, or conclusion from one supported paper PDF."
@@ -41,14 +43,18 @@ def search_documents(
     settings: Settings | None = None,
     store: VectorStore | None = None,
 ) -> ToolResult[list[RetrievedDocument]]:
-    """Search indexed document chunks without retaining state or choosing a workflow."""
+    """Search indexed chunks after rewriting the query to English for MiniLM."""
     active_settings = settings or get_settings()
     active_store = store or VectorStore(
         active_settings.chroma_path,
         active_settings.collection_name,
     )
     try:
-        documents = active_store.search(params.query, params.limit)
+        retrieval_query = to_english_retrieval_query(
+            params.query,
+            settings=active_settings,
+        )
+        documents = active_store.search(retrieval_query, params.limit)
     except (chromadb.errors.ChromaError, RuntimeError, ValueError) as error:
         logger.warning("Document search failed: %s", error)
         return ToolResult(success=False, error=f"Document search failed: {error}")

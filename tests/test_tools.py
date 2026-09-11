@@ -33,6 +33,26 @@ def test_search_documents_uses_the_vector_store() -> None:
     store.search.assert_called_once_with("attention", 5)
 
 
+def test_search_documents_rewrites_the_query_to_english_before_chroma(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = Mock()
+    store.search.return_value = []
+    monkeypatch.setattr(
+        document_tools,
+        "to_english_retrieval_query",
+        lambda query, settings=None: "central mechanism self-attention",
+    )
+
+    result = search_documents(
+        SearchToolParams(query="Qual é o mecanismo central?"),
+        store=store,
+    )
+
+    assert result.success is True
+    store.search.assert_called_once_with("central mechanism self-attention", 5)
+
+
 def test_extract_section_reads_the_requested_pdf(monkeypatch, tmp_path: Path) -> None:
     pdf_path = tmp_path / "1706.03762.pdf"
     pdf_path.write_bytes(b"pdf")

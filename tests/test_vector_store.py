@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from researchpal.models import ChunkMetadata
+from researchpal.tools import vector_store
 from researchpal.tools.vector_store import VectorStore, parse_chroma_query
 
 
@@ -119,3 +120,124 @@ def test_search_falls_back_when_metadata_is_invalid(
     assert results[0].metadata.paper_id == "orphan"
     assert results[0].metadata.page == 1
     assert "Invalid chunk metadata for orphan" in caplog.text
+
+
+def test_vector_store_uses_paper_embedding_function(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake_ef = object()
+    created: dict[str, object] = {}
+
+    class FakeClient:
+        def get_or_create_collection(self, name: str, embedding_function: object) -> FakeCollection:
+            created["name"] = name
+            created["embedding_function"] = embedding_function
+            return FakeCollection()
+
+    monkeypatch.setattr(vector_store, "paper_embedding_function", lambda: fake_ef)
+    monkeypatch.setattr(
+        vector_store.chromadb,
+        "PersistentClient",
+        lambda path: FakeClient(),
+    )
+
+    VectorStore(path=tmp_path, collection_name="papers")
+
+    assert created["name"] == "papers"
+    assert created["embedding_function"] is fake_ef
+
+
+def test_vector_store_rebuilds_collection_on_embedding_function_conflict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.deleted: list[str] = []
+
+        def get_or_create_collection(
+            self, name: str, embedding_function: object
+        ) -> FakeCollection:
+            self.calls += 1
+            if self.calls == 1:
+                raise ValueError(
+                    "Embedding function conflict: new: sentence_transformer "
+                    "vs persisted: default"
+                )
+            return FakeCollection()
+
+        def delete_collection(self, name: str) -> None:
+            self.deleted.append(name)
+
+    client = FakeClient()
+    monkeypatch.setattr(vector_store, "paper_embedding_function", lambda: object())
+    monkeypatch.setattr(
+        vector_store.chromadb,
+        "PersistentClient",
+        lambda path: client,
+    )
+
+    store = VectorStore(
+        path=tmp_path,
+        collection_name="papers",
+        rebuild_incompatible_collection=True,
+    )
+
+    assert client.deleted == ["papers"]
+    assert client.calls == 2
+    assert isinstance(store.collection, FakeCollection)
+
+
+def test_vector_store_raises_clear_error_on_embedding_function_conflict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeClient:
+        def get_or_create_collection(
+            self, name: str, embedding_function: object
+        ) -> FakeCollection:
+            raise ValueError(
+                "Embedding function conflict: new: sentence_transformer "
+                "vs persisted: default"
+            )
+
+    monkeypatch.setattr(vector_store, "paper_embedding_function", lambda: object())
+    monkeypatch.setattr(
+        vector_store.chromadb,
+        "PersistentClient",
+        lambda path: FakeClient(),
+    )
+
+    with pytest.raises(RuntimeError, match="ingest.py"):
+        VectorStore(path=tmp_path, collection_name="papers")
+
+
+def test_vector_store_detects_encoder_mismatch_when_chroma_does_not_raise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class NamedEmbeddingFunction:
+        @staticmethod
+        def name() -> str:
+            return "default"
+
+    class ExistingCollection:
+        configuration_json = {"embedding_function": {"name": "sentence_transformer"}}
+
+    class FakeClient:
+        def get_or_create_collection(
+            self, name: str, embedding_function: object
+        ) -> ExistingCollection:
+            return ExistingCollection()
+
+    monkeypatch.setattr(
+        vector_store,
+        "paper_embedding_function",
+        NamedEmbeddingFunction,
+    )
+    monkeypatch.setattr(
+        vector_store.chromadb,
+        "PersistentClient",
+        lambda path: FakeClient(),
+    )
+
+    with pytest.raises(RuntimeError, match="ingest.py"):
+        VectorStore(path=tmp_path, collection_name="papers")

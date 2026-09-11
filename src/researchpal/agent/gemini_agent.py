@@ -32,6 +32,10 @@ You are a research assistant for academic papers.
 Answer in Portuguese and use only evidence returned by the available tools.
 Use search_documents for semantic evidence and extract_section when the user
 asks about an abstract, introduction, or conclusion.
+When calling search_documents, pass the query in English so retrieval can
+compare English text with the original English papers. If the user asked in
+Portuguese, rewrite the search query into English first. The user-facing
+answer stays in Portuguese.
 Never invent facts, citations, paper contents, or section contents.
 If the tools return no evidence or fail, clearly state that there is not enough
 evidence to answer safely. Mention the paper identifiers used when possible.
@@ -57,7 +61,10 @@ class GeminiResearchAgent:
         name="search_documents",
         description=(
             "Busca semanticamente os chunks mais relevantes dos artigos indexados. "
-            "Use quando precisar encontrar evidência textual para responder à pergunta."
+            "O índice é em inglês: passe a query em inglês. Se a pergunta do usuário "
+            "estiver em português, reescreva-a como uma query de busca em inglês. "
+            "A resposta ao usuário continua em português. Use quando precisar "
+            "encontrar evidência textual para responder à pergunta."
         ),
         parameters_json_schema=SearchToolParams.model_json_schema(),
     )
