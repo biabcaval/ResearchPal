@@ -10,8 +10,34 @@ from researchpal.models import (
     RetrievedDocument,
     SearchToolParams,
 )
-from researchpal.tools import document_tools
-from researchpal.tools.document_tools import extract_section, search_documents
+from researchpal.tools.extract_section import ExtractSectionTool
+from researchpal.tools.search_documents import SearchDocumentsTool
+
+
+def test_search_documents_tool_exposes_name_description_and_params_schema() -> None:
+    tool = SearchDocumentsTool(store=Mock())
+
+    declaration = tool.declaration()
+
+    assert tool.name == "search_documents"
+    assert tool.description
+    assert declaration.name == "search_documents"
+    schema = declaration.parameters_json_schema or {}
+    properties = schema.get("properties", schema)
+    assert "query" in properties
+
+
+def test_extract_section_tool_exposes_name_description_and_params_schema() -> None:
+    tool = ExtractSectionTool(settings=Settings(pdf_directory=Path("unused")))
+
+    declaration = tool.declaration()
+
+    assert tool.name == "extract_section"
+    assert tool.description
+    assert declaration.name == "extract_section"
+    schema = declaration.parameters_json_schema or {}
+    properties = schema.get("properties", schema)
+    assert "paper_id" in properties
 
 
 def test_search_documents_uses_the_vector_store() -> None:
@@ -26,7 +52,7 @@ def test_search_documents_uses_the_vector_store() -> None:
     store = Mock()
     store.search.return_value = expected
 
-    result = search_documents(SearchToolParams(query="attention"), store=store)
+    result = SearchDocumentsTool(store=store).run(SearchToolParams(query="attention"))
 
     assert result.success is True
     assert result.data == expected
@@ -39,14 +65,12 @@ def test_search_documents_rewrites_the_query_to_english_before_chroma(
     store = Mock()
     store.search.return_value = []
     monkeypatch.setattr(
-        document_tools,
-        "to_english_retrieval_query",
+        "researchpal.tools.search_documents.to_english_retrieval_query",
         lambda query, settings=None: "central mechanism self-attention",
     )
 
-    result = search_documents(
+    result = SearchDocumentsTool(store=store).run(
         SearchToolParams(query="Qual é o mecanismo central?"),
-        store=store,
     )
 
     assert result.success is True
@@ -58,13 +82,7 @@ def test_extract_section_reads_the_requested_pdf(monkeypatch, tmp_path: Path) ->
     pdf_path.write_bytes(b"pdf")
     settings = Settings(pdf_directory=tmp_path)
     monkeypatch.setattr(
-        document_tools,
-        "get_settings",
-        lambda: settings,
-    )
-    monkeypatch.setattr(
-        document_tools,
-        "read_pdf_pages",
+        "researchpal.tools.extract_section.read_pdf_pages",
         lambda path, paper_id: [
             (
                 "Abstract\nUseful result\nIntroduction\nMore context",
@@ -73,9 +91,8 @@ def test_extract_section_reads_the_requested_pdf(monkeypatch, tmp_path: Path) ->
         ],
     )
 
-    result = extract_section(
+    result = ExtractSectionTool(settings=settings).run(
         ExtractSectionParams(paper_id="1706.03762", section="abstract"),
-        settings=settings,
     )
 
     assert result.success is True
@@ -84,9 +101,8 @@ def test_extract_section_reads_the_requested_pdf(monkeypatch, tmp_path: Path) ->
 
 
 def test_extract_section_rejects_unknown_paper(tmp_path: Path) -> None:
-    result = extract_section(
+    result = ExtractSectionTool(settings=Settings(pdf_directory=tmp_path)).run(
         ExtractSectionParams(paper_id="unknown", section="abstract"),
-        settings=Settings(pdf_directory=tmp_path),
     )
 
     assert result.success is False
@@ -99,8 +115,10 @@ def test_search_documents_logs_vector_store_failures(
     store = Mock()
     store.search.side_effect = RuntimeError("chroma is down")
 
-    with caplog.at_level("WARNING", logger="researchpal.tools.document_tools"):
-        result = search_documents(SearchToolParams(query="attention"), store=store)
+    with caplog.at_level("WARNING", logger="researchpal.tools.search_documents"):
+        result = SearchDocumentsTool(store=store).run(
+            SearchToolParams(query="attention"),
+        )
 
     assert result.success is False
     assert "chroma is down" in (result.error or "")

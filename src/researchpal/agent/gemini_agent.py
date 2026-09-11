@@ -23,7 +23,9 @@ from researchpal.models import (
     SearchToolParams,
     ToolResult,
 )
-from researchpal.tools import VectorStore, extract_section, search_documents
+from researchpal.tools import VectorStore
+from researchpal.tools.extract_section import ExtractSectionTool
+from researchpal.tools.search_documents import SearchDocumentsTool
 
 logger = logging.getLogger(__name__)
 
@@ -56,47 +58,30 @@ class GeminiResearchAgent:
             active_settings.chroma_path,
             active_settings.collection_name,
         )
-
-    search_documents_declaration = types.FunctionDeclaration(
-        name="search_documents",
-        description=(
-            "Busca semanticamente os chunks mais relevantes dos artigos indexados. "
-            "O índice é em inglês: passe a query em inglês. Se a pergunta do usuário "
-            "estiver em português, reescreva-a como uma query de busca em inglês. "
-            "A resposta ao usuário continua em português. Use quando precisar "
-            "encontrar evidência textual para responder à pergunta."
-        ),
-        parameters_json_schema=SearchToolParams.model_json_schema(),
-    )
-
-    extract_section_declaration = types.FunctionDeclaration(
-        name="extract_section",
-        description=(
-            "Extrai uma seção específica de um artigo. "
-            "Use somente para abstract, introduction ou conclusion."
-        ),
-        parameters_json_schema=ExtractSectionParams.model_json_schema(),
-    )
-
-    document_tools = types.Tool(
-        function_declarations=[
-            search_documents_declaration,
-            extract_section_declaration,
-        ]
-    )
+        self.search_documents_tool = SearchDocumentsTool(
+            settings=active_settings,
+            store=self.store,
+        )
+        self.extract_section_tool = ExtractSectionTool(settings=active_settings)
+        self.document_tools = types.Tool(
+            function_declarations=[
+                self.search_documents_tool.declaration(),
+                self.extract_section_tool.declaration(),
+            ]
+        )
 
     def _execute_tool(
         self,
         call: GeminiFunctionCall,
     ) -> ToolResult[list[RetrievedDocument] | ExtractedSection]:
         try:
-            if call.name == "search_documents":
+            if call.name == self.search_documents_tool.name:
                 params = SearchToolParams.model_validate(call.arguments)
-                return search_documents(params=params, store=self.store)
+                return self.search_documents_tool.run(params)
 
-            if call.name == "extract_section":
+            if call.name == self.extract_section_tool.name:
                 params = ExtractSectionParams.model_validate(call.arguments)
-                return extract_section(params=params, settings=self.settings)
+                return self.extract_section_tool.run(params)
         except ValidationError as error:
             logger.warning("Invalid tool arguments for %s: %s", call.name, error)
             return ToolResult(success=False, error=f"Invalid tool arguments: {error}")

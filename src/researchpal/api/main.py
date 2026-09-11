@@ -12,7 +12,7 @@ from researchpal.models import (
     SearchToolParams,
     ToolResult,
 )
-from researchpal.tools import VectorStore, search_documents
+from researchpal.tools import SearchDocumentsTool, VectorStore
 
 app = FastAPI(title="ResearchPal")
 logger = logging.getLogger(__name__)
@@ -28,8 +28,8 @@ def query(
     params: SearchToolParams,
     store: Annotated[VectorStore, Depends(get_vector_store)],
 ) -> ToolResult[list[RetrievedDocument]]:
-    """Search indexed chunks using the same `search_documents` tool path."""
-    return search_documents(params=params, store=store)
+    """Search indexed chunks using the same `SearchDocumentsTool` path."""
+    return SearchDocumentsTool(store=store).run(params)
 
 
 @app.post("/ask", response_model=AskHttpResponse)
