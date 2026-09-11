@@ -6,8 +6,10 @@ from google.genai import errors as genai_errors
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.exceptions import ModelError
 from langchain_core.messages import BaseMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from pydantic import ValidationError
 
 from researchpal.agent.errors import ModelUnavailableError
@@ -46,6 +48,12 @@ SYNTHESIS_INSTRUCTION = (
 )
 MAX_TOOL_ROUNDS = 3
 MODEL_CALL_LIMIT_PREFIX = "Model call limits exceeded"
+_GEMINI_UPSTREAM_ERRORS = (
+    genai_errors.APIError,
+    genai_errors.ClientError,
+    ModelError,
+    ChatGoogleGenerativeAIError,
+)
 
 
 class GeminiResearchAgent:
@@ -104,7 +112,7 @@ class GeminiResearchAgent:
             result = self.graph.invoke(
                 {"messages": [HumanMessage(content=request.question)]}
             )
-        except (genai_errors.APIError, genai_errors.ClientError) as error:
+        except _GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Gemini request failed: %s", error)
             raise ModelUnavailableError(f"Gemini request failed: {error}") from error
 
@@ -151,7 +159,7 @@ class GeminiResearchAgent:
                     HumanMessage(content=SYNTHESIS_INSTRUCTION),
                 ]
             )
-        except (genai_errors.APIError, genai_errors.ClientError) as error:
+        except _GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Final Gemini synthesis failed: %s", error)
             raise ModelUnavailableError(
                 f"Final Gemini synthesis failed: {error}"

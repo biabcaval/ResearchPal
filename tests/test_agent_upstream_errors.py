@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from google.genai import errors as genai_errors
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_google_genai.chat_models import GoogleRateLimitError
 
 from researchpal.agent import ModelUnavailableError
 from researchpal.agent.gemini_agent import GeminiResearchAgent
@@ -44,6 +45,17 @@ def _agent(
         graph=graph,
         synthesis_model=synthesis_model or object(),
     )
+
+
+def test_ask_raises_model_unavailable_when_langchain_wraps_quota_error() -> None:
+    class FailingGraph:
+        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+            raise GoogleRateLimitError("You exceeded your current quota")
+
+    agent = _agent(graph=FailingGraph())
+
+    with pytest.raises(ModelUnavailableError, match="quota"):
+        agent.ask(AskRequest(question="Qual a conclusão?"))
 
 
 def test_ask_raises_model_unavailable_when_gemini_rejects_the_request() -> None:
