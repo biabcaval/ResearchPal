@@ -9,35 +9,54 @@ from researchpal.models import (
     ExtractSectionParams,
     RetrievedDocument,
     SearchToolParams,
+    ToolResult,
 )
 from researchpal.tools.extract_section import ExtractSectionTool
 from researchpal.tools.search_documents import SearchDocumentsTool
 
 
-def test_search_documents_tool_exposes_name_description_and_params_schema() -> None:
-    tool = SearchDocumentsTool(store=Mock())
-
-    declaration = tool.declaration()
+def test_search_documents_tool_exposes_langchain_name_and_query_schema() -> None:
+    tool = SearchDocumentsTool(store=Mock()).as_langchain_tool()
 
     assert tool.name == "search_documents"
     assert tool.description
-    assert declaration.name == "search_documents"
-    schema = declaration.parameters_json_schema or {}
+    schema = tool.args_schema.model_json_schema()
     properties = schema.get("properties", schema)
     assert "query" in properties
 
 
-def test_extract_section_tool_exposes_name_description_and_params_schema() -> None:
-    tool = ExtractSectionTool(settings=Settings(pdf_directory=Path("unused")))
-
-    declaration = tool.declaration()
+def test_extract_section_tool_exposes_langchain_name_and_paper_id_schema() -> None:
+    tool = ExtractSectionTool(
+        settings=Settings(pdf_directory=Path("unused")),
+    ).as_langchain_tool()
 
     assert tool.name == "extract_section"
     assert tool.description
-    assert declaration.name == "extract_section"
-    schema = declaration.parameters_json_schema or {}
+    schema = tool.args_schema.model_json_schema()
     properties = schema.get("properties", schema)
     assert "paper_id" in properties
+
+
+def test_search_documents_langchain_tool_returns_tool_result_json() -> None:
+    expected = [
+        RetrievedDocument(
+            identifier="1706.03762-page-1-chunk-0",
+            text="attention is all you need",
+            metadata={"paper_id": "1706.03762", "page": 1},
+            distance=0.1,
+        )
+    ]
+    store = Mock()
+    store.search.return_value = expected
+
+    raw = SearchDocumentsTool(store=store).as_langchain_tool().invoke(
+        {"query": "attention", "limit": 5},
+    )
+    result = ToolResult[list[RetrievedDocument]].model_validate_json(raw)
+
+    assert result.success is True
+    assert result.data == expected
+    store.search.assert_called_once_with("attention", 5)
 
 
 def test_search_documents_uses_the_vector_store() -> None:

@@ -18,6 +18,8 @@ dependencies = [
     "uvicorn[standard]>=0.34.0",
     "gradio>=5.0.0",
     "tiktoken>=0.14.0",
+    "langchain>=1.4.0",
+    "langchain-google-genai>=4.4.0",
 ]
 
 [dependency-groups]
