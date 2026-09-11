@@ -98,7 +98,7 @@ def test_ask_raises_model_unavailable_when_final_synthesis_fails() -> None:
 
     class FailingSynthesis:
         def invoke(self, messages: object) -> AIMessage:
-            raise QUOTA_ERROR
+            raise GoogleRateLimitError("You exceeded your current quota")
 
     agent = _agent(graph=LimitGraph(), synthesis_model=FailingSynthesis())
 

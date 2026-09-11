@@ -128,6 +128,21 @@ def test_extract_section_rejects_unknown_paper(tmp_path: Path) -> None:
     assert result.error == "Unsupported paper_id: unknown"
 
 
+def test_search_documents_langchain_tool_returns_failure_json_on_os_error() -> None:
+    store = Mock()
+    store.search.side_effect = OSError("disk read failed")
+
+    raw = SearchDocumentsTool(store=store).as_langchain_tool().invoke(
+        {"query": "attention", "limit": 5},
+    )
+    result = ToolResult[list[RetrievedDocument]].model_validate_json(raw)
+
+    assert result.success is False
+    assert result.error is not None
+    assert "Tool execution failed" in result.error
+    assert "disk read failed" in result.error
+
+
 def test_search_documents_logs_vector_store_failures(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

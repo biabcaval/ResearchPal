@@ -1,5 +1,6 @@
 """Atomic, stateless tools with a typed schema and `ToolResult` return."""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import ClassVar, Generic, TypeVar
 
@@ -7,6 +8,8 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ValidationError
 
 from researchpal.models import ToolResult
+
+logger = logging.getLogger(__name__)
 
 TParams = TypeVar("TParams", bound=BaseModel)
 TData = TypeVar("TData")
@@ -30,7 +33,18 @@ class ResearchTool(ABC, Generic[TParams, TData]):
                     success=False,
                     error=f"Invalid tool arguments: {error}",
                 ).model_dump_json()
-            result = self.run(params)
+            try:
+                result = self.run(params)
+            except (OSError, RuntimeError, ValueError) as error:
+                logger.warning(
+                    "Tool %s execution failed: %s",
+                    self.name,
+                    error,
+                )
+                return ToolResult(
+                    success=False,
+                    error=f"Tool execution failed: {error}",
+                ).model_dump_json()
             return result.model_dump_json()
 
         return StructuredTool.from_function(

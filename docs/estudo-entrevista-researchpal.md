@@ -77,7 +77,7 @@ Se perguntarem “é um RAG?”, responda: **sim, RAG clássico retrieve-then-ge
 | `config` | `Settings` (pydantic-settings), `REQUIRED_ARXIV_IDS` |
 | `models` | Contratos internos: request, tools, RAG, metadados |
 | `pipeline` | Download, chunk, upsert |
-| `tools` | Funções determinísticas: busca e extração |
+| `tools` | Classes determinísticas: busca e extração |
 | `agent` | LangChain `create_agent` + function calling nativo |
 | `api` | FastAPI, schemas HTTP, DI |
 | `ui` | Gradio + cliente `requests` |
@@ -263,7 +263,7 @@ Simples, já no `pyproject`. Não reconstrói figuras, layout, equações. Pági
 
 ### D8. uv + `pyproject.toml`, Python ≥ 3.12
 
-Sem `requirements.txt`. `uv sync --dev`. Runtime: chromadb, google-genai, fastapi, pypdf2, pydantic, pydantic-settings, requests, uvicorn, gradio. Dev: pytest.
+Sem `requirements.txt`. `uv sync --dev`. Runtime: chromadb, google-genai, langchain, langchain-google-genai, fastapi, pypdf2, pydantic, pydantic-settings, requests, uvicorn, gradio. Dev: pytest.
 
 ### D9. Gradio em processo separado
 
@@ -374,7 +374,7 @@ Tarefa factual, reproduzibilidade. Não substitui grounding.
 Instrução estável (modelos frequentemente raciocinam melhor nas rules em EN) + produto PT. Descriptions das tools em PT alinham com a pergunta do usuário.
 
 **C6. Como o SDK é isolado nos testes?**  
-`gemini_sdk.py`: Protocols (`GeminiGenerateContentResponse`, etc.) + parsers. Testes usam fake client / fake parts, não o cliente real.
+Injeção de `graph` e `synthesis_model` no `GeminiResearchAgent`. Testes usam fakes que implementam `invoke`, sem chamar Gemini nem LangChain reais.
 
 **C7. Function calling vs “prompt: chame JSON”?**  
 JSON solto quebra, não valida schema, difícil de testar. Function calling nativo + Pydantic `model_validate` nos args.
@@ -461,8 +461,8 @@ Um corpus, uma collection. Multi-corpus exigiria nome por revisão / tenant.
 **G7. `get_settings()` cria Settings novo sempre.**  
 Não é singleton cacheado. Cada chamada relê env. Simples; em teoria poderia divergir se env mudar no processo — irrelevante aqui.
 
-**G8. Por que Protocols no VectorStore e no Gemini SDK?**  
-Injeção de fake sem herdar classes do vendor. Testes estáveis quando o SDK muda nomes internos.
+**G8. Por que Protocol no VectorStore?**  
+Injeção de fake store sem herdar Chroma. Testes de tools e agente estáveis sem disco nem embedding real.
 
 ### H. Perguntas “pegadinhas” e respostas honestas
 
@@ -475,8 +475,8 @@ O texto sim, se esse ramo disparar; as fontes não. Pequena inconsistência de U
 **H3. `/query` não usa o agente. Isso é RAG?**  
 É só retrieve. Não passa pelo loop de tools. Ainda pode gastar Gemini para reescrever a query em inglês antes do MiniLM.
 
-**H4. Function declarations são atributos de classe.**  
-Sim, `search_documents_declaration` no corpo da classe, compartilhado entre instâncias.
+**H4. O schema das tools vem de onde?**  
+Do Pydantic `params_model` de cada `ResearchTool`, exposto ao modelo via `as_langchain_tool()` como `args_schema` do `StructuredTool`.
 
 **H5. Ingestão e API precisam do mesmo `chroma_path`.**  
 Sim. Se a API apontar para outro diretório, busca vazia (e o modelo dirá falta de evidência — 200, não 503).
@@ -508,7 +508,7 @@ ResearchPal é RAG local de corpus fechado. Três PDFs do arXiv viram chunks no 
 
 ### 15 minutos (deep dive)
 
-Inclua: IDs determinísticos, `to_chroma()` sem null, adapter `gemini_sdk`, Depends lazy, testes fake, matriz 422/200/503, dívida do `retrieval_limit`.
+Inclua: IDs determinísticos, `to_chroma()` sem null, Depends lazy, testes fake (`graph` / `synthesis_model`), matriz 422/200/503, dívida do `retrieval_limit`.
 
 ### Whiteboard: “o usuário pergunta o abstract do BERT”
 
