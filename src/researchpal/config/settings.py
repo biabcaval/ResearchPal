@@ -59,20 +59,6 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias=AliasChoices("RESEARCHPAL_CHUNK_OVERLAP", "chunk_overlap"),
     )
-    retrieval_limit: int = Field(
-        default=5,
-        ge=1,
-        le=100,
-        validation_alias=AliasChoices("RESEARCHPAL_RETRIEVAL_LIMIT", "retrieval_limit"),
-    )
-    retrieval_score_threshold: float | None = Field(
-        default=None,
-        ge=0,
-        validation_alias=AliasChoices(
-            "RESEARCHPAL_RETRIEVAL_SCORE_THRESHOLD",
-            "retrieval_score_threshold",
-        ),
-    )
     api_url: str = Field(
         default="http://127.0.0.1:8000",
         validation_alias=AliasChoices("RESEARCHPAL_API_URL", "api_url"),

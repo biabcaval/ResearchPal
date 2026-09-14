@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Protocol, TypedDict
 
 from google.genai import errors as genai_errors
 from langchain.agents import create_agent
@@ -56,14 +57,32 @@ _GEMINI_UPSTREAM_ERRORS = (
 )
 
 
+class LangChainAgentState(TypedDict):
+    """State passed to `AgentGraph.invoke` (LangChain messages dict)."""
+
+    messages: list[BaseMessage]
+
+
+class AgentGraph(Protocol):
+    """LangChain agent runnable used by `ask` (real graph or test double)."""
+
+    def invoke(self, payload: LangChainAgentState) -> LangChainAgentState: ...
+
+
+class SynthesisModel(Protocol):
+    """Chat model used for the no-further-tools synthesis pass."""
+
+    def invoke(self, messages: Sequence[BaseMessage]) -> BaseMessage: ...
+
+
 class GeminiResearchAgent:
     def __init__(
         self,
         settings: Settings | None = None,
         *,
         store: VectorStore | None = None,
-        graph: Any | None = None,
-        synthesis_model: Any | None = None,
+        graph: AgentGraph | None = None,
+        synthesis_model: SynthesisModel | None = None,
     ) -> None:
         active_settings = settings or get_settings()
 
@@ -80,17 +99,15 @@ class GeminiResearchAgent:
             store=self.store,
         )
         self.extract_section_tool = ExtractSectionTool(settings=active_settings)
-        self.graph = graph
-        self.synthesis_model = synthesis_model
 
-        if self.graph is None or self.synthesis_model is None:
+        if graph is None or synthesis_model is None:
             chat_model = ChatGoogleGenerativeAI(
                 model=active_settings.gemini_model,
                 temperature=0.0,
                 google_api_key=active_settings.gemini_api_key,
             )
-            if self.graph is None:
-                self.graph = create_agent(
+            if graph is None:
+                graph = create_agent(
                     model=chat_model,
                     tools=[
                         self.search_documents_tool.as_langchain_tool(),
@@ -104,13 +121,18 @@ class GeminiResearchAgent:
                         )
                     ],
                 )
-            if self.synthesis_model is None:
-                self.synthesis_model = chat_model
+            if synthesis_model is None:
+                synthesis_model = chat_model
+
+        self.graph = graph
+        self.synthesis_model = synthesis_model
 
     def ask(self, request: AskRequest) -> AskResponse:
         try:
             result = self.graph.invoke(
-                {"messages": [HumanMessage(content=request.question)]}
+                LangChainAgentState(
+                    messages=[HumanMessage(content=request.question)]
+                )
             )
         except _GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Gemini request failed: %s", error)

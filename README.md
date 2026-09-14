@@ -102,7 +102,7 @@ uv run pytest
 
 **Embedding model — English MiniLM, Portuguese answers.** The store uses Chroma's default ONNX MiniLM encoder (`all-MiniLM-L6-v2`). Papers stay in English. `search_documents` rewrites the question into an English search query so comparison is English-to-English, then Gemini answers in Portuguese (the evaluation language). English questions are also rewritten into a retrieval query; the user-facing answer stays in Portuguese. Re-run `ingest.py` after this encoder change if the collection was built with multilingual MiniLM.
 
-**LLM — LangChain + Gemini 3.5 Flash.** The agent uses `langchain` `create_agent` with `langchain-google-genai` (`ChatGoogleGenerativeAI`) so Gemini native function calling drives `search_documents` and `extract_section`. LangChain is the LLM/tool-calling layer only — not document loaders, embeddings, or the Chroma retriever. ReAct is rejected because the challenge requires native function calling. Default model is `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash is unavailable. Temperature is `0.0`. `ModelCallLimitMiddleware(run_limit=3)` caps tool-enabled calls, then one tool-free synthesis call. `google-genai` remains for the English query rewriter.
+**LLM — LangChain + Gemini 3.5 Flash.** The agent uses `langchain` `create_agent` with `langchain-google-genai` (`ChatGoogleGenerativeAI`) so Gemini native function calling drives `search_documents` and `extract_section`. LangChain is the LLM/tool-calling layer only — not document loaders, embeddings, or the Chroma retriever. ReAct is rejected because the challenge requires native function calling. Default model is `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash is unavailable. Temperature is `0.0`. `ModelCallLimitMiddleware(run_limit=1)` caps tool-enabled calls, then one tool-free synthesis call. `google-genai` remains for the English query rewriter.
 
 ## Known limitations
 
@@ -110,7 +110,7 @@ uv run pytest
 - Answers depend on PyPDF2 text extraction; layout, figures, and equations are not recovered as structured content.
 - Section extraction is heading-regex based (`abstract` / `introduction` / `conclusion`) and can miss papers with unusual headings.
 - The agent has no memory across requests and stops calling tools after three rounds.
-- Retrieval quality is bounded by MiniLM embeddings, chunk size, and `RESEARCHPAL_RETRIEVAL_LIMIT` (default 5). There is no hybrid BM25 + vector search. If the English query rewrite fails, search falls back to the original question and recall can drop.
+- Retrieval quality is bounded by MiniLM embeddings, chunk size, and the search tool `limit` (default 5, set by the model). There is no hybrid BM25 + vector search. If the English query rewrite fails, search falls back to the original question and recall can drop.
 - The public HTTP contract returns only `question` and `answer`; sources and tool errors exist internally but are not exposed to clients. Gemini failures (429 quota, 503 overload) are the exception: they return HTTP `503` with the upstream reason instead of an answer, so a quota problem is never disguised as missing evidence.
 - `GEMINI_API_KEY` is required at request time (`503` if missing). Importing the app does not open the network or the database.
 
@@ -225,7 +225,7 @@ uv run pytest
 
 **Modelo de embedding — MiniLM inglês, respostas em português.** O store usa o encoder ONNX MiniLM padrão do Chroma (`all-MiniLM-L6-v2`). Os artigos permanecem em inglês. `search_documents` reescreve a pergunta como uma query de busca em inglês para a comparação ser inglês-com-inglês; o Gemini responde em português (a língua da avaliação). Perguntas já em inglês também são reescritas para retrieval; a resposta ao usuário continua em português. Rode `ingest.py` de novo se a collection foi criada com MiniLM multilingual.
 
-**LLM — LangChain + Gemini 3.5 Flash.** O agente usa `langchain` `create_agent` com `langchain-google-genai` (`ChatGoogleGenerativeAI`) para o function calling nativo do Gemini acionar `search_documents` e `extract_section`. LangChain é só a camada LLM/tools — não loaders, embeddings nem o retriever do Chroma. ReAct foi rejeitado porque o desafio pede function calling nativo. O modelo padrão é `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash não está disponível. Temperatura `0.0`. `ModelCallLimitMiddleware(run_limit=3)` limita as chamadas com tools; depois há uma síntese sem tools. `google-genai` permanece na reescrita da query para inglês.
+**LLM — LangChain + Gemini 3.5 Flash.** O agente usa `langchain` `create_agent` com `langchain-google-genai` (`ChatGoogleGenerativeAI`) para o function calling nativo do Gemini acionar `search_documents` e `extract_section`. LangChain é só a camada LLM/tools — não loaders, embeddings nem o retriever do Chroma. ReAct foi rejeitado porque o desafio pede function calling nativo. O modelo padrão é `gemini-3.5-flash` (`GEMINI_MODEL`); Gemini 2.0 Flash não está disponível. Temperatura `0.0`. `ModelCallLimitMiddleware(run_limit=1)` limita as chamadas com tools; depois há uma síntese sem tools. `google-genai` permanece na reescrita da query para inglês.
 
 ## Limitações conhecidas
 
@@ -233,6 +233,6 @@ uv run pytest
 - As respostas dependem da extração de texto do PyPDF2; layout, figuras e equações não são recuperados como conteúdo estruturado.
 - A extração de seções usa regex de headings (`abstract` / `introduction` / `conclusion`) e pode falhar em artigos com títulos atípicos.
 - O agente não tem memória entre requisições e para de chamar tools após três rodadas.
-- A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e por `RESEARCHPAL_RETRIEVAL_LIMIT` (padrão 5). Não há busca híbrida BM25 + vetorial. Se a reescrita da query para inglês falhar, a busca cai na pergunta original e o recall pode cair.
+- A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e pelo `limit` da tool de busca (padrão 5, escolhido pelo modelo). Não há busca híbrida BM25 + vetorial. Se a reescrita da query para inglês falhar, a busca cai na pergunta original e o recall pode cair.
 - O contrato HTTP público devolve só `question` e `answer`; fontes e erros de tools existem internamente, mas não são expostos ao cliente. As falhas do Gemini (429 de cota, 503 de sobrecarga) são a exceção: devolvem HTTP `503` com o motivo original, para que um problema de cota nunca seja confundido com falta de evidência.
 - `GEMINI_API_KEY` é obrigatória na hora da requisição (`503` se estiver ausente). Importar a aplicação não abre a rede nem o banco.

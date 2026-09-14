@@ -6,7 +6,12 @@ from langchain.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_google_genai.chat_models import GoogleRateLimitError
 
 from researchpal.agent import ModelUnavailableError
-from researchpal.agent.gemini_agent import GeminiResearchAgent
+from researchpal.agent.gemini_agent import (
+    AgentGraph,
+    GeminiResearchAgent,
+    LangChainAgentState,
+    SynthesisModel,
+)
 from researchpal.config import Settings
 from researchpal.models import AskRequest, RetrievedDocument, ToolResult
 
@@ -33,23 +38,28 @@ class FakeStore:
         ]
 
 
+class UnusedSynthesis:
+    def invoke(self, messages: object) -> AIMessage:
+        raise AssertionError("synthesis should not run")
+
+
 def _agent(
     *,
-    graph: object,
-    synthesis_model: object | None = None,
+    graph: AgentGraph,
+    synthesis_model: SynthesisModel | None = None,
 ) -> GeminiResearchAgent:
     settings = Settings(gemini_api_key="test-key", chroma_path=Path("data/chroma"))
     return GeminiResearchAgent(
         settings,
         store=FakeStore(),
         graph=graph,
-        synthesis_model=synthesis_model or object(),
+        synthesis_model=synthesis_model or UnusedSynthesis(),
     )
 
 
 def test_ask_raises_model_unavailable_when_langchain_wraps_quota_error() -> None:
     class FailingGraph:
-        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+        def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             raise GoogleRateLimitError("You exceeded your current quota")
 
     agent = _agent(graph=FailingGraph())
@@ -60,7 +70,7 @@ def test_ask_raises_model_unavailable_when_langchain_wraps_quota_error() -> None
 
 def test_ask_raises_model_unavailable_when_gemini_rejects_the_request() -> None:
     class FailingGraph:
-        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+        def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             raise QUOTA_ERROR
 
     agent = _agent(graph=FailingGraph())
@@ -78,7 +88,7 @@ def test_ask_raises_model_unavailable_when_final_synthesis_fails() -> None:
     )
 
     class LimitGraph:
-        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+        def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             return {
                 "messages": [
                     HumanMessage(content="Qual a conclusão?"),
@@ -115,7 +125,7 @@ def test_ask_synthesizes_without_tools_after_model_call_limit() -> None:
     )
 
     class LimitGraph:
-        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+        def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             return {
                 "messages": [
                     HumanMessage(content="Qual a conclusão?"),
@@ -148,7 +158,7 @@ def test_ask_synthesizes_without_tools_after_model_call_limit() -> None:
 
 def test_ask_still_reports_missing_evidence_when_tools_return_nothing() -> None:
     class EmptyGraph:
-        def invoke(self, payload: dict[str, object]) -> dict[str, object]:
+        def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             return {
                 "messages": [
                     HumanMessage(content="Pergunta fora do corpus"),
