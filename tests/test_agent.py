@@ -11,8 +11,16 @@ from researchpal.agent.gemini_agent import (
     LangChainAgentState,
     SynthesisModel,
 )
+from researchpal.agent.sanity import AnswerSanityChecker
 from researchpal.config import Settings
-from researchpal.models import AskRequest, RetrievedDocument, ToolResult
+from researchpal.models import AnswerSanityCheck, AskRequest, RetrievedDocument, ToolResult
+
+
+class AlwaysPassChecker:
+    def check(self, question: str, answer: str) -> AnswerSanityCheck:
+        return AnswerSanityCheck(
+            addresses_question=True, unanswered_parts=[], reason="ok"
+        )
 
 
 def test_constructor_types_graph_and_synthesis_as_protocols() -> None:
@@ -26,6 +34,9 @@ def test_constructor_types_graph_and_synthesis_as_protocols() -> None:
     assert type(None) in graph_args
     assert SynthesisModel in synthesis_args
     assert type(None) in synthesis_args
+    sanity_args = set(get_args(hints["sanity_checker"]))
+    assert AnswerSanityChecker in sanity_args
+    assert type(None) in sanity_args
 
 
 def test_agent_graph_invoke_uses_langchain_agent_state() -> None:
@@ -91,6 +102,7 @@ def test_agent_maps_tool_messages_and_synthesizes_answer() -> None:
         store=FakeStore(),
         graph=FakeGraph(),
         synthesis_model=UnusedSynthesis(),
+        sanity_checker=AlwaysPassChecker(),
     )
 
     response = agent.ask(AskRequest(question="Como funciona?"))
@@ -111,6 +123,7 @@ def _agent_with_graph(graph: AgentGraph) -> GeminiResearchAgent:
         store=FakeStore(),
         graph=graph,
         synthesis_model=UnusedSynthesis(),
+        sanity_checker=AlwaysPassChecker(),
     )
 
 

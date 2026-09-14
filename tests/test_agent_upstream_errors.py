@@ -13,7 +13,24 @@ from researchpal.agent.gemini_agent import (
     SynthesisModel,
 )
 from researchpal.config import Settings
-from researchpal.models import AskRequest, RetrievedDocument, ToolResult
+from researchpal.models import (
+    AnswerSanityCheck,
+    AskRequest,
+    RetrievedDocument,
+    ToolResult,
+)
+
+
+class AlwaysPassChecker:
+    def check(self, question: str, answer: str) -> AnswerSanityCheck:
+        return AnswerSanityCheck(
+            addresses_question=True, unanswered_parts=[], reason="ok"
+        )
+
+
+class UnusedChecker:
+    def check(self, question: str, answer: str) -> AnswerSanityCheck:
+        raise AssertionError("sanity checker should not run")
 
 QUOTA_ERROR = genai_errors.APIError(
     429,
@@ -47,6 +64,7 @@ def _agent(
     *,
     graph: AgentGraph,
     synthesis_model: SynthesisModel | None = None,
+    sanity_checker: AlwaysPassChecker | UnusedChecker | None = None,
 ) -> GeminiResearchAgent:
     settings = Settings(gemini_api_key="test-key", chroma_path=Path("data/chroma"))
     return GeminiResearchAgent(
@@ -54,6 +72,7 @@ def _agent(
         store=FakeStore(),
         graph=graph,
         synthesis_model=synthesis_model or UnusedSynthesis(),
+        sanity_checker=sanity_checker or AlwaysPassChecker(),
     )
 
 
@@ -166,7 +185,7 @@ def test_ask_still_reports_missing_evidence_when_tools_return_nothing() -> None:
                 ]
             }
 
-    agent = _agent(graph=EmptyGraph())
+    agent = _agent(graph=EmptyGraph(), sanity_checker=UnusedChecker())
     response = agent.ask(AskRequest(question="Pergunta fora do corpus"))
 
     assert response.evidence_found is False

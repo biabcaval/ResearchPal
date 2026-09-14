@@ -14,6 +14,14 @@ from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from pydantic import ValidationError
 
 from researchpal.agent.errors import ModelUnavailableError
+from researchpal.agent.sanity import (
+    SANITY_FAIL_ERROR,
+    SANITY_FALLBACK_ANSWER,
+    SANITY_REJECT_ERROR,
+    SANITY_REWRITE_ERROR,
+    AnswerSanityChecker,
+    GeminiAnswerSanityChecker,
+)
 from researchpal.config import Settings, get_settings
 from researchpal.models import (
     AskRequest,
@@ -41,6 +49,15 @@ Never invent facts, citations, paper contents, or section contents.
 If the tools return no evidence or fail, clearly state that there is not enough
 evidence to answer safely. Mention the paper identifiers used when possible.
 """
+NO_EVIDENCE_ANSWER = (
+    "Não encontrei evidência suficiente nos artigos indexados "
+    "para responder com segurança."
+)
+COULD_NOT_SYNTHESIZE_ANSWER = (
+    "Recuperei evidências nos artigos, mas não consegui concluir "
+    "uma síntese final automaticamente. Consulte as fontes retornadas."
+)
+CANNED_ANSWERS = frozenset({NO_EVIDENCE_ANSWER, COULD_NOT_SYNTHESIZE_ANSWER})
 SYNTHESIS_INSTRUCTION = (
     "Não chame mais nenhuma ferramenta. "
     "Responda usando exclusivamente as evidências "
@@ -83,6 +100,7 @@ class GeminiResearchAgent:
         store: VectorStore | None = None,
         graph: AgentGraph | None = None,
         synthesis_model: SynthesisModel | None = None,
+        sanity_checker: AnswerSanityChecker | None = None,
     ) -> None:
         active_settings = settings or get_settings()
 
@@ -100,6 +118,7 @@ class GeminiResearchAgent:
         )
         self.extract_section_tool = ExtractSectionTool(settings=active_settings)
 
+        chat_model: ChatGoogleGenerativeAI | None = None
         if graph is None or synthesis_model is None:
             chat_model = ChatGoogleGenerativeAI(
                 model=active_settings.gemini_model,
@@ -126,6 +145,14 @@ class GeminiResearchAgent:
 
         self.graph = graph
         self.synthesis_model = synthesis_model
+        if sanity_checker is None:
+            judge_model = chat_model or ChatGoogleGenerativeAI(
+                model=active_settings.gemini_model,
+                temperature=0.0,
+                google_api_key=active_settings.gemini_api_key,
+            )
+            sanity_checker = GeminiAnswerSanityChecker(judge_model)
+        self.sanity_checker = sanity_checker
 
     def ask(self, request: AskRequest) -> AskResponse:
         try:
@@ -143,7 +170,11 @@ class GeminiResearchAgent:
 
         if _is_model_call_limit_message(_last_ai_message(messages)):
             return self._synthesize_without_tools(
-                messages, sources, sections, tool_errors
+                request.question,
+                messages,
+                sources,
+                sections,
+                tool_errors,
             )
 
         answer = _ai_text(_last_ai_message(messages))
@@ -153,16 +184,21 @@ class GeminiResearchAgent:
                 sources=sources,
                 sections=sections,
             )
-        return AskResponse(
-            answer=answer,
-            sources=_unique_sources(sources),
-            sections=sections,
-            evidence_found=bool(sources or sections),
-            tool_errors=tool_errors,
+        return self._apply_sanity_check(
+            request.question,
+            messages,
+            AskResponse(
+                answer=answer,
+                sources=_unique_sources(sources),
+                sections=sections,
+                evidence_found=bool(sources or sections),
+                tool_errors=tool_errors,
+            ),
         )
 
     def _synthesize_without_tools(
         self,
+        question: str,
         messages: list[BaseMessage],
         sources: list[RetrievedDocument],
         sections: list[ExtractedSection],
@@ -189,18 +225,117 @@ class GeminiResearchAgent:
 
         answer = _ai_text(final_response)
         if answer:
-            return AskResponse(
-                answer=answer,
-                sources=_unique_sources(sources),
-                sections=sections,
-                evidence_found=bool(sources or sections),
-                tool_errors=tool_errors + ["Maximum tool-calling rounds exceeded"],
+            return self._apply_sanity_check(
+                question,
+                messages,
+                AskResponse(
+                    answer=answer,
+                    sources=_unique_sources(sources),
+                    sections=sections,
+                    evidence_found=bool(sources or sections),
+                    tool_errors=tool_errors + ["Maximum tool-calling rounds exceeded"],
+                ),
             )
         return self._no_evidence_response(
             tool_errors + ["Maximum tool-calling rounds exceeded"],
             sources=sources,
             sections=sections,
         )
+
+    def _apply_sanity_check(
+        self,
+        question: str,
+        messages: list[BaseMessage],
+        response: AskResponse,
+    ) -> AskResponse:
+        if response.answer in CANNED_ANSWERS:
+            return response
+
+        try:
+            verdict = self.sanity_checker.check(question, response.answer)
+        except _GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("Sanity check Gemini request failed: %s", error)
+            raise ModelUnavailableError(
+                f"Sanity check Gemini request failed: {error}"
+            ) from error
+
+        if verdict.addresses_question:
+            return response
+
+        tool_errors = response.tool_errors + [SANITY_FAIL_ERROR]
+        rewritten = self._rewrite_for_unanswered_parts(
+            messages, verdict.unanswered_parts
+        )
+        if not rewritten:
+            return response.model_copy(
+                update={
+                    "answer": SANITY_FALLBACK_ANSWER,
+                    "tool_errors": tool_errors + [SANITY_REJECT_ERROR],
+                }
+            )
+
+        try:
+            second = self.sanity_checker.check(question, rewritten)
+        except _GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("Sanity check Gemini request failed: %s", error)
+            raise ModelUnavailableError(
+                f"Sanity check Gemini request failed: {error}"
+            ) from error
+
+        if second.addresses_question:
+            return response.model_copy(
+                update={
+                    "answer": rewritten,
+                    "tool_errors": tool_errors + [SANITY_REWRITE_ERROR],
+                }
+            )
+        return response.model_copy(
+            update={
+                "answer": SANITY_FALLBACK_ANSWER,
+                "tool_errors": tool_errors
+                + [SANITY_REWRITE_ERROR, SANITY_REJECT_ERROR],
+            }
+        )
+
+    def _rewrite_for_unanswered_parts(
+        self,
+        messages: list[BaseMessage],
+        unanswered_parts: list[str],
+    ) -> str:
+        history = [
+            message
+            for message in messages
+            if not _is_model_call_limit_message(message)
+        ]
+        parts = (
+            "; ".join(unanswered_parts)
+            if unanswered_parts
+            else "a pergunta original"
+        )
+        instruction = (
+            "Não chame mais nenhuma ferramenta. "
+            "Responda usando exclusivamente as evidências "
+            "já retornadas acima. "
+            "A resposta anterior não atendeu à pergunta. "
+            f"Cubra explicitamente: {parts}. "
+            "Não invente fatos. Se as evidências não cobrirem "
+            "esses pontos, declare isso explicitamente. "
+            "Responda em português."
+        )
+        try:
+            final_response = self.synthesis_model.invoke(
+                [
+                    SystemMessage(content=SYSTEM_INSTRUCTION),
+                    *history,
+                    HumanMessage(content=instruction),
+                ]
+            )
+        except _GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("Sanity rewrite Gemini request failed: %s", error)
+            raise ModelUnavailableError(
+                f"Sanity rewrite Gemini request failed: {error}"
+            ) from error
+        return _ai_text(final_response)
 
     @staticmethod
     def _no_evidence_response(
@@ -212,20 +347,14 @@ class GeminiResearchAgent:
         resolved_sections = sections or []
         if resolved_sources or resolved_sections:
             return AskResponse(
-                answer=(
-                    "Recuperei evidências nos artigos, mas não consegui concluir "
-                    "uma síntese final automaticamente. Consulte as fontes retornadas."
-                ),
+                answer=COULD_NOT_SYNTHESIZE_ANSWER,
                 sources=resolved_sources,
                 sections=resolved_sections,
                 evidence_found=True,
                 tool_errors=tool_errors,
             )
         return AskResponse(
-            answer=(
-                "Não encontrei evidência suficiente nos artigos indexados "
-                "para responder com segurança."
-            ),
+            answer=NO_EVIDENCE_ANSWER,
             sources=[],
             sections=[],
             evidence_found=False,
