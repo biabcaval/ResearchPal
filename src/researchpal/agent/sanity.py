@@ -3,13 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from google.genai import errors as genai_errors
 from langchain.messages import HumanMessage, SystemMessage
-from langchain_core.exceptions import ModelError, OutputParserException
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
+from langchain_core.exceptions import OutputParserException
 from pydantic import ValidationError
 
-from researchpal.agent.errors import ModelUnavailableError
+from researchpal.agent.errors import GEMINI_UPSTREAM_ERRORS, ModelUnavailableError
 from researchpal.models import AnswerSanityCheck
 
 logger = logging.getLogger(__name__)
@@ -33,12 +31,6 @@ Write unanswered_parts in the same language as the user question.
 Leave unanswered_parts empty when addresses_question is true.
 reason is a short English phrase for logs only.
 """
-_GEMINI_UPSTREAM_ERRORS = (
-    genai_errors.APIError,
-    genai_errors.ClientError,
-    ModelError,
-    ChatGoogleGenerativeAIError,
-)
 
 
 class AnswerSanityChecker(Protocol):
@@ -76,8 +68,8 @@ class GeminiAnswerSanityChecker:
                 ]
             )
             result = _coerce_check(raw)
-        except _GEMINI_UPSTREAM_ERRORS as error:
-            logger.warning("Sanity check Gemini request failed: %s", error)
+        except GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("Sanity judge Gemini request failed: %s", error)
             raise ModelUnavailableError(
                 f"Sanity check Gemini request failed: {error}"
             ) from error

@@ -1,5 +1,16 @@
 """Agent-level exceptions."""
 
+from google.genai import errors as genai_errors
+from langchain_core.exceptions import ModelError
+from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
+
+GEMINI_UPSTREAM_ERRORS = (
+    genai_errors.APIError,
+    genai_errors.ClientError,
+    ModelError,
+    ChatGoogleGenerativeAIError,
+)
+
 
 class ModelUnavailableError(RuntimeError):
     """Raised when Gemini rejects or fails a request (quota, overload, transport).

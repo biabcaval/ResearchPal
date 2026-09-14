@@ -3,17 +3,14 @@ import logging
 from collections.abc import Sequence
 from typing import Protocol, TypedDict
 
-from google.genai import errors as genai_errors
 from langchain.agents import create_agent
 from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.exceptions import ModelError
 from langchain_core.messages import BaseMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 from pydantic import ValidationError
 
-from researchpal.agent.errors import ModelUnavailableError
+from researchpal.agent.errors import GEMINI_UPSTREAM_ERRORS, ModelUnavailableError
 from researchpal.agent.sanity import (
     SANITY_FAIL_ERROR,
     SANITY_FALLBACK_ANSWER,
@@ -66,12 +63,6 @@ SYNTHESIS_INSTRUCTION = (
 )
 MAX_TOOL_ROUNDS = 1
 MODEL_CALL_LIMIT_PREFIX = "Model call limits exceeded"
-_GEMINI_UPSTREAM_ERRORS = (
-    genai_errors.APIError,
-    genai_errors.ClientError,
-    ModelError,
-    ChatGoogleGenerativeAIError,
-)
 
 
 class LangChainAgentState(TypedDict):
@@ -161,7 +152,7 @@ class GeminiResearchAgent:
                     messages=[HumanMessage(content=request.question)]
                 )
             )
-        except _GEMINI_UPSTREAM_ERRORS as error:
+        except GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Gemini request failed: %s", error)
             raise ModelUnavailableError(f"Gemini request failed: {error}") from error
 
@@ -204,11 +195,7 @@ class GeminiResearchAgent:
         sections: list[ExtractedSection],
         tool_errors: list[str],
     ) -> AskResponse:
-        history = [
-            message
-            for message in messages
-            if not _is_model_call_limit_message(message)
-        ]
+        history = _history_without_limit_message(messages)
         try:
             final_response = self.synthesis_model.invoke(
                 [
@@ -217,7 +204,7 @@ class GeminiResearchAgent:
                     HumanMessage(content=SYNTHESIS_INSTRUCTION),
                 ]
             )
-        except _GEMINI_UPSTREAM_ERRORS as error:
+        except GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Final Gemini synthesis failed: %s", error)
             raise ModelUnavailableError(
                 f"Final Gemini synthesis failed: {error}"
@@ -253,8 +240,8 @@ class GeminiResearchAgent:
 
         try:
             verdict = self.sanity_checker.check(question, response.answer)
-        except _GEMINI_UPSTREAM_ERRORS as error:
-            logger.warning("Sanity check Gemini request failed: %s", error)
+        except GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("First sanity check Gemini request failed: %s", error)
             raise ModelUnavailableError(
                 f"Sanity check Gemini request failed: {error}"
             ) from error
@@ -276,8 +263,8 @@ class GeminiResearchAgent:
 
         try:
             second = self.sanity_checker.check(question, rewritten)
-        except _GEMINI_UPSTREAM_ERRORS as error:
-            logger.warning("Sanity check Gemini request failed: %s", error)
+        except GEMINI_UPSTREAM_ERRORS as error:
+            logger.warning("Second sanity check Gemini request failed: %s", error)
             raise ModelUnavailableError(
                 f"Sanity check Gemini request failed: {error}"
             ) from error
@@ -302,11 +289,7 @@ class GeminiResearchAgent:
         messages: list[BaseMessage],
         unanswered_parts: list[str],
     ) -> str:
-        history = [
-            message
-            for message in messages
-            if not _is_model_call_limit_message(message)
-        ]
+        history = _history_without_limit_message(messages)
         parts = (
             "; ".join(unanswered_parts)
             if unanswered_parts
@@ -330,7 +313,7 @@ class GeminiResearchAgent:
                     HumanMessage(content=instruction),
                 ]
             )
-        except _GEMINI_UPSTREAM_ERRORS as error:
+        except GEMINI_UPSTREAM_ERRORS as error:
             logger.warning("Sanity rewrite Gemini request failed: %s", error)
             raise ModelUnavailableError(
                 f"Sanity rewrite Gemini request failed: {error}"
@@ -399,6 +382,16 @@ def _last_ai_message(messages: list[BaseMessage]) -> AIMessage | None:
         if isinstance(message, AIMessage):
             return message
     return None
+
+
+def _history_without_limit_message(
+    messages: list[BaseMessage],
+) -> list[BaseMessage]:
+    return [
+        message
+        for message in messages
+        if not _is_model_call_limit_message(message)
+    ]
 
 
 def _is_model_call_limit_message(message: BaseMessage | None) -> bool:

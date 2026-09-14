@@ -7,6 +7,7 @@ from langchain_google_genai.chat_models import GoogleRateLimitError
 from researchpal.agent.errors import ModelUnavailableError
 from researchpal.agent.gemini_agent import (
     CANNED_ANSWERS,
+    NO_EVIDENCE_ANSWER,
     GeminiResearchAgent,
     LangChainAgentState,
     SynthesisModel,
@@ -21,6 +22,7 @@ from researchpal.config import Settings
 from researchpal.models import (
     AnswerSanityCheck,
     AskRequest,
+    AskResponse,
     RetrievedDocument,
     ToolResult,
 )
@@ -185,7 +187,7 @@ def test_ask_returns_fallback_when_rewrite_is_empty() -> None:
     assert SANITY_REJECT_ERROR in response.tool_errors
 
 
-def test_ask_skips_checker_for_canned_no_evidence_answer() -> None:
+def test_ask_skips_checker_when_empty_model_yields_canned_no_evidence() -> None:
     class EmptyGraph:
         def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
             return {
@@ -241,6 +243,34 @@ def test_ask_raises_when_judge_hits_quota() -> None:
         agent.ask(AskRequest(question="Como funciona?"))
 
 
+def test_ask_raises_when_checker_raises_model_unavailable_directly() -> None:
+    class QuotaChecker:
+        def check(self, question: str, answer: str) -> AnswerSanityCheck:
+            raise ModelUnavailableError(
+                "Sanity check Gemini request failed: quota exceeded"
+            )
+
+    agent, _ = _agent(checker=QuotaChecker())  # type: ignore[arg-type]
+    with pytest.raises(ModelUnavailableError, match="quota"):
+        agent.ask(AskRequest(question="Como funciona?"))
+
+
+def test_ask_raises_when_second_check_hits_quota() -> None:
+    checker = SequenceChecker(
+        [
+            AnswerSanityCheck(
+                addresses_question=False,
+                unanswered_parts=["detalhe"],
+                reason="incomplete",
+            ),
+            GoogleRateLimitError("You exceeded your current quota"),
+        ]
+    )
+    agent, _ = _agent(checker=checker)
+    with pytest.raises(ModelUnavailableError, match="quota"):
+        agent.ask(AskRequest(question="Como funciona?"))
+
+
 def test_ask_raises_when_rewrite_hits_quota() -> None:
     class FailingSynthesis:
         def invoke(self, messages: object) -> AIMessage:
@@ -258,6 +288,25 @@ def test_ask_raises_when_rewrite_hits_quota() -> None:
     agent, _ = _agent(checker=checker, synthesis=FailingSynthesis())  # type: ignore[arg-type]
     with pytest.raises(ModelUnavailableError, match="quota"):
         agent.ask(AskRequest(question="Como funciona?"))
+
+
+def test_apply_sanity_check_skips_checker_for_canned_answers() -> None:
+    class UnusedChecker:
+        def check(self, question: str, answer: str) -> AnswerSanityCheck:
+            raise AssertionError("sanity checker should not run")
+
+    agent, _ = _agent(checker=SequenceChecker([]))  # unused via override
+    agent.sanity_checker = UnusedChecker()
+    canned = AskResponse(
+        answer=NO_EVIDENCE_ANSWER,
+        sources=[],
+        sections=[],
+        evidence_found=False,
+        tool_errors=[],
+    )
+    result = agent._apply_sanity_check("Pergunta?", [], canned)
+
+    assert result is canned
 
 
 def test_ask_retries_when_first_judge_payload_is_invalid() -> None:

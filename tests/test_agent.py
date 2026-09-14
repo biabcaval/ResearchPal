@@ -13,7 +13,12 @@ from researchpal.agent.gemini_agent import (
 )
 from researchpal.agent.sanity import AnswerSanityChecker
 from researchpal.config import Settings
-from researchpal.models import AnswerSanityCheck, AskRequest, RetrievedDocument, ToolResult
+from researchpal.models import (
+    AnswerSanityCheck,
+    AskRequest,
+    RetrievedDocument,
+    ToolResult,
+)
 
 
 class AlwaysPassChecker:

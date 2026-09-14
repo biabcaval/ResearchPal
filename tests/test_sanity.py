@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+import logging
 
 import pytest
 from google.genai import errors as genai_errors
@@ -81,8 +81,19 @@ def test_checker_returns_unanswered_parts_when_incomplete() -> None:
     assert result.unanswered_parts == ["comparação entre os dois artigos"]
 
 
-def test_checker_treats_invalid_output_as_fail() -> None:
+def test_checker_treats_invalid_output_as_fail(caplog: pytest.LogCaptureFixture) -> None:
     stub = StubStructuredModel({"addresses_question": "yes"})
+    with caplog.at_level(logging.WARNING):
+        result = GeminiAnswerSanityChecker(stub).check("Q?", "A.")
+
+    assert result.addresses_question is False
+    assert result.unanswered_parts == []
+    assert result.reason == "invalid judge output"
+    assert "Invalid sanity check output" in caplog.text
+
+
+def test_checker_treats_unexpected_payload_type_as_fail() -> None:
+    stub = StubStructuredModel([{"addresses_question": True}])
     result = GeminiAnswerSanityChecker(stub).check("Q?", "A.")
 
     assert result.addresses_question is False
