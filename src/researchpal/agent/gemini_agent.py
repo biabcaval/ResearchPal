@@ -46,7 +46,7 @@ SYNTHESIS_INSTRUCTION = (
     "já retornadas acima. Se elas forem insuficientes, "
     "declare isso explicitamente."
 )
-MAX_TOOL_ROUNDS = 3
+MAX_TOOL_ROUNDS = 1
 MODEL_CALL_LIMIT_PREFIX = "Model call limits exceeded"
 _GEMINI_UPSTREAM_ERRORS = (
     genai_errors.APIError,
