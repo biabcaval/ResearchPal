@@ -227,17 +227,19 @@ def _collect_tool_outputs(
                 else message.content
             )
             result = ToolResult[object].model_validate(payload)
+            if not result.success:
+                if result.error:
+                    tool_errors.append(result.error)
+                continue
+            if message.name == "search_documents" and isinstance(result.data, list):
+                documents = [
+                    RetrievedDocument.model_validate(item) for item in result.data
+                ]
+                sources.extend(documents)
+            elif message.name == "extract_section" and result.data is not None:
+                sections.append(ExtractedSection.model_validate(result.data))
         except (TypeError, ValueError, ValidationError) as error:
             tool_errors.append(f"Invalid tool result: {error}")
-            continue
-        if not result.success:
-            if result.error:
-                tool_errors.append(result.error)
-            continue
-        if message.name == "search_documents" and isinstance(result.data, list):
-            sources.extend(RetrievedDocument.model_validate(item) for item in result.data)
-        elif message.name == "extract_section" and result.data is not None:
-            sections.append(ExtractedSection.model_validate(result.data))
     return sources, sections, tool_errors
 
 

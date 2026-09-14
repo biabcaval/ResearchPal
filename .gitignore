@@ -8,3 +8,5 @@ chroma_data/
 __pycache__/
 *.py[cod]
 .venv/
+.worktrees/
+.DS_Store
