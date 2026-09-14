@@ -1,5 +1,6 @@
 from .documents import ChunkMetadata
 from .rag import (
+    AnswerSanityCheck,
     AskRequest,
     AskResponse,
     ChromaQueryResult,
@@ -12,6 +13,7 @@ from .rag import (
 )
 
 __all__ = [
+    "AnswerSanityCheck",
     "AskRequest",
     "AskResponse",
     "ChromaQueryResult",

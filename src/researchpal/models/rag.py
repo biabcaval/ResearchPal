@@ -34,6 +34,14 @@ class AskResponse(StrictModel):
     tool_errors: list[str] = Field(default_factory=list)
 
 
+class AnswerSanityCheck(StrictModel):
+    """Whether a candidate answer addresses the user question."""
+
+    addresses_question: bool
+    unanswered_parts: list[str] = Field(default_factory=list)
+    reason: str
+
+
 class QueryResponse(StrictModel):
     ids: list[list[str]]
     distances: list[list[float]]
