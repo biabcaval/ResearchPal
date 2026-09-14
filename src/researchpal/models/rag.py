@@ -4,6 +4,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from researchpal.models.documents import ChunkMetadata
 
+MAX_QUESTION_WORDS = 50
+
+
+def _validate_user_query(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("question must not be empty")
+    if len(normalized.split()) > MAX_QUESTION_WORDS:
+        raise ValueError(
+            f"question must contain no more than {MAX_QUESTION_WORDS} words"
+        )
+    return normalized
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -11,6 +24,12 @@ class StrictModel(BaseModel):
 
 class AskRequest(StrictModel):
     question: str = Field(min_length=1)
+
+    @field_validator("question")
+    @classmethod
+    def validate_question(cls, value: str) -> str:
+        """Validate and normalize a public user question."""
+        return _validate_user_query(value)
 
 
 class RetrievedDocument(StrictModel):
@@ -93,6 +112,12 @@ class ChromaQueryResult(BaseModel):
 class SearchToolParams(StrictModel):
     query: str = Field(min_length=1)
     limit: int = Field(default=5, ge=1, le=100)
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        """Validate and normalize a public search query."""
+        return _validate_user_query(value)
 
 
 class ExtractSectionParams(StrictModel):

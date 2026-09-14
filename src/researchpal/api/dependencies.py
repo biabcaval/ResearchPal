@@ -8,6 +8,7 @@ from researchpal.config import get_settings
 from researchpal.tools import VectorStore
 
 logger = logging.getLogger(__name__)
+_DEPENDENCY_UNAVAILABLE_DETAIL = "Research service is temporarily unavailable."
 
 
 def get_research_agent() -> GeminiResearchAgent:
@@ -18,7 +19,7 @@ def get_research_agent() -> GeminiResearchAgent:
         logger.warning("Failed to create the research agent: %s", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
+            detail=_DEPENDENCY_UNAVAILABLE_DETAIL,
         ) from error
 
 
@@ -31,5 +32,5 @@ def get_vector_store() -> VectorStore:
         logger.warning("Failed to create the vector store: %s", error)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(error),
+            detail=_DEPENDENCY_UNAVAILABLE_DETAIL,
         ) from error
