@@ -26,12 +26,23 @@ class ExtractedSection(StrictModel):
     text: str
 
 
+class Citation(StrictModel):
+    """A numbered source shown next to an answer claim."""
+
+    number: int = Field(ge=1)
+    identifier: str
+    paper_id: str
+    page: int = Field(ge=1)
+    snippet: str
+
+
 class AskResponse(StrictModel):
     answer: str
     sources: list[RetrievedDocument]
     sections: list[ExtractedSection] = Field(default_factory=list)
     evidence_found: bool
     tool_errors: list[str] = Field(default_factory=list)
+    citations: list[Citation] = Field(default_factory=list)
 
 
 class AnswerSanityCheck(StrictModel):

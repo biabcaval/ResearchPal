@@ -4,7 +4,13 @@ from fastapi.testclient import TestClient
 
 from researchpal.api.dependencies import get_research_agent, get_vector_store
 from researchpal.api.main import app
-from researchpal.models import AskRequest, AskResponse, ChunkMetadata, RetrievedDocument
+from researchpal.models import (
+    AskRequest,
+    AskResponse,
+    ChunkMetadata,
+    Citation,
+    RetrievedDocument,
+)
 
 
 class FakeAgent:
@@ -34,7 +40,44 @@ def test_ask_endpoint_uses_injected_agent_without_external_calls() -> None:
     assert response.json() == {
         "question": "O que é atenção?",
         "answer": "Echo: O que é atenção?",
+        "citations": [],
     }
+
+
+def test_ask_endpoint_includes_citations_from_the_agent() -> None:
+    class CitedAgent:
+        def ask(self, request: AskRequest) -> AskResponse:
+            return AskResponse(
+                answer=f"Echo: {request.question} [1]",
+                sources=[],
+                evidence_found=True,
+                citations=[
+                    Citation(
+                        number=1,
+                        identifier="1706.03762-page-1-chunk-0",
+                        paper_id="1706.03762",
+                        page=1,
+                        snippet="Attention improves sequence modeling.",
+                    )
+                ],
+            )
+
+    app.dependency_overrides[get_research_agent] = lambda: CitedAgent()
+    try:
+        response = TestClient(app).post("/ask", json={"question": "O que é atenção?"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["citations"] == [
+        {
+            "number": 1,
+            "identifier": "1706.03762-page-1-chunk-0",
+            "paper_id": "1706.03762",
+            "page": 1,
+            "snippet": "Attention improves sequence modeling.",
+        }
+    ]
 
 
 def test_ask_endpoint_rejects_extra_fields() -> None:

@@ -11,8 +11,8 @@ class ResearchPalUIError(Exception):
     """Raised when the UI cannot obtain an answer from the API."""
 
 
-def ask_http(question: str, *, base_url: str, timeout: float) -> str:
-    """POST a question to `/ask` and return the answer string.
+def ask_http(question: str, *, base_url: str, timeout: float) -> AskHttpResponse:
+    """POST a question to `/ask` and return the parsed JSON body.
 
     Args:
         question: User question. Whitespace-only values are rejected.
@@ -20,7 +20,7 @@ def ask_http(question: str, *, base_url: str, timeout: float) -> str:
         timeout: Requests timeout in seconds.
 
     Returns:
-        The `answer` field from a successful JSON response.
+        The validated `AskHttpResponse` from a successful JSON response.
 
     Raises:
         ResearchPalUIError: Empty question, network failure, or non-success API result.
@@ -55,7 +55,7 @@ def ask_http(question: str, *, base_url: str, timeout: float) -> str:
         raise ResearchPalUIError(
             "API error: response did not include an answer"
         ) from error
-    return parsed.answer
+    return parsed
 
 
 def _response_detail(response: requests.Response) -> str:

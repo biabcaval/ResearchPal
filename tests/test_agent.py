@@ -115,6 +115,8 @@ def test_agent_maps_tool_messages_and_synthesizes_answer() -> None:
     assert response.answer == "Resposta baseada na evidência."
     assert response.evidence_found is True
     assert response.sources[0].identifier == "1706.03762-page-1-chunk-0"
+    assert response.citations[0].number == 1
+    assert response.citations[0].identifier == "1706.03762-page-1-chunk-0"
 
 
 class UnusedSynthesis:
@@ -230,3 +232,40 @@ def test_ask_records_malformed_extract_section_instead_of_raising() -> None:
     assert response.sections == []
     assert response.evidence_found is False
     assert any("Invalid tool result" in error for error in response.tool_errors)
+
+
+class CitedGraph:
+    def invoke(self, payload: LangChainAgentState) -> LangChainAgentState:
+        document = RetrievedDocument(
+            identifier="1706.03762-page-1-chunk-0",
+            text="Attention improves sequence modeling.",
+            metadata={"paper_id": "1706.03762", "page": 1},
+            distance=0.2,
+        )
+        return {
+            "messages": [
+                HumanMessage(content="Como funciona?"),
+                ToolMessage(
+                    content=ToolResult(success=True, data=[document]).model_dump_json(),
+                    name="search_documents",
+                    tool_call_id="call-1",
+                ),
+                AIMessage(
+                    content=(
+                        "A atenção ajuda [[1706.03762-page-1-chunk-0]] "
+                        "e isto é inventado [[9999.00000-page-1-chunk-0]]."
+                    )
+                ),
+            ]
+        }
+
+
+def test_ask_rewrites_known_markers_and_strips_unknown_ids() -> None:
+    response = _agent_with_graph(CitedGraph()).ask(
+        AskRequest(question="Como funciona?"),
+    )
+
+    assert response.answer == "A atenção ajuda [1] e isto é inventado ."
+    assert [citation.identifier for citation in response.citations] == [
+        "1706.03762-page-1-chunk-0"
+    ]

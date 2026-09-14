@@ -46,4 +46,8 @@ def ask(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(error),
         ) from error
-    return AskHttpResponse(question=request.question, answer=result.answer)
+    return AskHttpResponse(
+        question=request.question,
+        answer=result.answer,
+        citations=result.citations,
+    )

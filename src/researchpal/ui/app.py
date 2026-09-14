@@ -8,6 +8,7 @@ import gradio as gr
 from pydantic import ValidationError
 
 from researchpal.config import get_settings
+from researchpal.ui.citations import CITATION_CSS, format_answer_html
 from researchpal.ui.client import ResearchPalUIError, ask_http
 
 
@@ -16,7 +17,7 @@ def respond(message: str, history: Sequence[object] | None = None) -> str:
     _ = history
     try:
         settings = get_settings()
-        return ask_http(
+        payload = ask_http(
             message,
             base_url=settings.api_url,
             timeout=settings.ask_timeout,
@@ -25,6 +26,7 @@ def respond(message: str, history: Sequence[object] | None = None) -> str:
         raise gr.Error(str(error)) from error
     except ResearchPalUIError as error:
         raise gr.Error(str(error)) from error
+    return format_answer_html(payload.answer, payload.citations)
 
 
 def build_interface() -> gr.ChatInterface:
@@ -34,11 +36,13 @@ def build_interface() -> gr.ChatInterface:
         title="ResearchPal",
         description=(
             "Ask questions about the ingested arXiv papers. "
-            "Each message is an independent question; the API does not keep chat memory."
+            "Each message is an independent question; the API does not keep chat memory. "
+            "Hover a numbered citation to see the paper, page, and snippet."
         ),
+        chatbot=gr.Chatbot(sanitize_html=False),
     )
 
 
 def launch() -> None:
-    """Start the Gradio server."""
-    build_interface().launch()
+    """Start the Gradio server with citation hover styles."""
+    build_interface().launch(css=CITATION_CSS)

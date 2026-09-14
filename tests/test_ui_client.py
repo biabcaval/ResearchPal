@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
+from researchpal.api.schemas import AskHttpResponse
 from researchpal.ui.client import ResearchPalUIError, ask_http
 
 
@@ -12,16 +13,21 @@ def test_ask_http_returns_answer_from_successful_response() -> None:
     response.json.return_value = {
         "question": "O que é atenção?",
         "answer": "Atenção é um mecanismo...",
+        "citations": [],
     }
 
     with patch("researchpal.ui.client.requests.post", return_value=response) as post:
-        answer = ask_http(
+        payload = ask_http(
             "O que é atenção?",
             base_url="http://127.0.0.1:8000",
             timeout=180,
         )
 
-    assert answer == "Atenção é um mecanismo..."
+    assert payload == AskHttpResponse(
+        question="O que é atenção?",
+        answer="Atenção é um mecanismo...",
+        citations=[],
+    )
     post.assert_called_once_with(
         "http://127.0.0.1:8000/ask",
         json={"question": "O que é atenção?"},
@@ -32,7 +38,7 @@ def test_ask_http_returns_answer_from_successful_response() -> None:
 def test_ask_http_strips_trailing_slash_from_base_url() -> None:
     response = Mock()
     response.status_code = 200
-    response.json.return_value = {"question": "q", "answer": "a"}
+    response.json.return_value = {"question": "q", "answer": "a", "citations": []}
 
     with patch("researchpal.ui.client.requests.post", return_value=response) as post:
         ask_http("q", base_url="http://127.0.0.1:8000/", timeout=10)
@@ -74,6 +80,18 @@ def test_ask_http_rejects_response_missing_question() -> None:
     response = Mock()
     response.status_code = 200
     response.json.return_value = {"answer": "partial payload"}
+
+    with (
+        patch("researchpal.ui.client.requests.post", return_value=response),
+        pytest.raises(ResearchPalUIError, match="did not include an answer"),
+    ):
+        ask_http("pergunta", base_url="http://127.0.0.1:8000", timeout=10)
+
+
+def test_ask_http_rejects_response_missing_citations() -> None:
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {"question": "q", "answer": "a"}
 
     with (
         patch("researchpal.ui.client.requests.post", return_value=response),

@@ -10,6 +10,7 @@ from langchain_core.messages import BaseMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import ValidationError
 
+from researchpal.agent.citations import attach_citations
 from researchpal.agent.errors import GEMINI_UPSTREAM_ERRORS, ModelUnavailableError
 from researchpal.agent.sanity import (
     SANITY_FAIL_ERROR,
@@ -45,6 +46,11 @@ answer stays in Portuguese.
 Never invent facts, citations, paper contents, or section contents.
 If the tools return no evidence or fail, clearly state that there is not enough
 evidence to answer safely. Mention the paper identifiers used when possible.
+After each factual claim, cite the supporting search_documents chunk by copying
+its identifier exactly, wrapped as [[identifier]]. Example:
+Atenção escala com o número de cabeças [[1706.03762-page-3-chunk-0]].
+Never invent identifiers. Do not cite extract_section results unless that same
+chunk identifier also appears in search_documents output.
 """
 NO_EVIDENCE_ANSWER = (
     "Não encontrei evidência suficiente nos artigos indexados "
@@ -59,7 +65,10 @@ SYNTHESIS_INSTRUCTION = (
     "Não chame mais nenhuma ferramenta. "
     "Responda usando exclusivamente as evidências "
     "já retornadas acima. Se elas forem insuficientes, "
-    "declare isso explicitamente."
+    "declare isso explicitamente. "
+    "Após cada afirmação factual, cite o identifier do chunk "
+    "exatamente como em search_documents, no formato [[identifier]]. "
+    "Nunca invente identifiers."
 )
 MAX_TOOL_ROUNDS = 1
 MODEL_CALL_LIMIT_PREFIX = "Model call limits exceeded"
@@ -160,31 +169,37 @@ class GeminiResearchAgent:
         sources, sections, tool_errors = _collect_tool_outputs(messages)
 
         if _is_model_call_limit_message(_last_ai_message(messages)):
-            return self._synthesize_without_tools(
-                request.question,
-                messages,
-                sources,
-                sections,
-                tool_errors,
+            return self._with_citations(
+                self._synthesize_without_tools(
+                    request.question,
+                    messages,
+                    sources,
+                    sections,
+                    tool_errors,
+                )
             )
 
         answer = _ai_text(_last_ai_message(messages))
         if not answer:
-            return self._no_evidence_response(
-                tool_errors + ["Gemini returned an empty answer"],
-                sources=sources,
-                sections=sections,
+            return self._with_citations(
+                self._no_evidence_response(
+                    tool_errors + ["Gemini returned an empty answer"],
+                    sources=sources,
+                    sections=sections,
+                )
             )
-        return self._apply_sanity_check(
-            request.question,
-            messages,
-            AskResponse(
-                answer=answer,
-                sources=_unique_sources(sources),
-                sections=sections,
-                evidence_found=bool(sources or sections),
-                tool_errors=tool_errors,
-            ),
+        return self._with_citations(
+            self._apply_sanity_check(
+                request.question,
+                messages,
+                AskResponse(
+                    answer=answer,
+                    sources=_unique_sources(sources),
+                    sections=sections,
+                    evidence_found=bool(sources or sections),
+                    tool_errors=tool_errors,
+                ),
+            )
         )
 
     def _synthesize_without_tools(
@@ -303,7 +318,10 @@ class GeminiResearchAgent:
             f"Cubra explicitamente: {parts}. "
             "Não invente fatos. Se as evidências não cobrirem "
             "esses pontos, declare isso explicitamente. "
-            "Responda em português."
+            "Responda em português. "
+            "Após cada afirmação factual, cite o identifier do chunk "
+            "exatamente como em search_documents, no formato [[identifier]]. "
+            "Nunca invente identifiers."
         )
         try:
             final_response = self.synthesis_model.invoke(
@@ -319,6 +337,14 @@ class GeminiResearchAgent:
                 f"Sanity rewrite Gemini request failed: {error}"
             ) from error
         return _ai_text(final_response)
+
+    @staticmethod
+    def _with_citations(response: AskResponse) -> AskResponse:
+        """Number `[[id]]` markers against retrieved sources on the final answer."""
+        if response.answer == NO_EVIDENCE_ANSWER:
+            return response
+        answer, citations = attach_citations(response.answer, response.sources)
+        return response.model_copy(update={"answer": answer, "citations": citations})
 
     @staticmethod
     def _no_evidence_response(

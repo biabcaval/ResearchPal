@@ -49,7 +49,7 @@ Package layout:
 - `researchpal/config`: environment configuration.
 - `researchpal/pipeline`: PDF download, extraction, and ingestion.
 
-`POST /ask` accepts `{"question": "..."}` and returns `{"question": "...", "answer": "..."}`. Interactive docs are at `http://127.0.0.1:8000/docs`. The Gradio UI (`ui.py`) is a thin HTTP client of that endpoint.
+`POST /ask` accepts `{"question": "..."}` and returns `{"question": "...", "answer": "...", "citations": [...]}`. Numbered markers like `[1]` in `answer` map onto `citations`. Interactive docs are at `http://127.0.0.1:8000/docs`. The Gradio UI (`ui.py`) is a thin HTTP client of that endpoint: citation numbers render as hover chips with paper id, page, and a snippet.
 
 ## Tools vs agent
 
@@ -111,7 +111,7 @@ uv run pytest
 - Section extraction is heading-regex based (`abstract` / `introduction` / `conclusion`) and can miss papers with unusual headings.
 - The agent has no memory across requests and stops calling tools after three rounds.
 - Retrieval quality is bounded by MiniLM embeddings, chunk size, and the search tool `limit` (default 5, set by the model). There is no hybrid BM25 + vector search. If the English query rewrite fails, search falls back to the original question and recall can drop.
-- The public HTTP contract returns only `question` and `answer`; sources and tool errors exist internally but are not exposed to clients. Gemini failures (429 quota, 503 overload) are the exception: they return HTTP `503` with the upstream reason instead of an answer, so a quota problem is never disguised as missing evidence.
+- The public HTTP contract returns `question`, `answer`, and `citations`. Full retrieved chunks and tool errors stay internal. Gemini failures (429 quota, 503 overload) return HTTP `503` with the upstream reason instead of an answer, so a quota problem is never disguised as missing evidence.
 - `/ask` may spend extra Gemini calls on the sanity judge and a single rewrite pass after a candidate answer exists. If the judge or rewrite hits quota or another upstream failure, the endpoint returns HTTP `503` even when a candidate answer was already available.
 - `GEMINI_API_KEY` is required at request time (`503` if missing). Importing the app does not open the network or the database.
 
@@ -173,7 +173,7 @@ Organização do pacote:
 - `researchpal/config`: configuração via ambiente.
 - `researchpal/pipeline`: download, extração e ingestão de PDFs.
 
-`POST /ask` aceita `{"question": "..."}` e devolve `{"question": "...", "answer": "..."}`. A documentação interativa fica em `http://127.0.0.1:8000/docs`. A UI Gradio (`ui.py`) é um cliente HTTP desse endpoint.
+`POST /ask` aceita `{"question": "..."}` e devolve `{"question": "...", "answer": "...", "citations": [...]}`. Marcadores `[1]` na resposta apontam para `citations`. A documentação interativa fica em `http://127.0.0.1:8000/docs`. A UI Gradio (`ui.py`) é um cliente HTTP desse endpoint: os números viram chips; ao passar o mouse, aparecem paper id, página e trecho.
 
 ## Distinção entre tools e agente
 
@@ -235,6 +235,6 @@ uv run pytest
 - A extração de seções usa regex de headings (`abstract` / `introduction` / `conclusion`) e pode falhar em artigos com títulos atípicos.
 - O agente não tem memória entre requisições e para de chamar tools após três rodadas.
 - A qualidade da recuperação é limitada pelos embeddings MiniLM, pelo tamanho do chunk e pelo `limit` da tool de busca (padrão 5, escolhido pelo modelo). Não há busca híbrida BM25 + vetorial. Se a reescrita da query para inglês falhar, a busca cai na pergunta original e o recall pode cair.
-- O contrato HTTP público devolve só `question` e `answer`; fontes e erros de tools existem internamente, mas não são expostos ao cliente. As falhas do Gemini (429 de cota, 503 de sobrecarga) são a exceção: devolvem HTTP `503` com o motivo original, para que um problema de cota nunca seja confundido com falta de evidência.
+- O contrato HTTP público devolve `question`, `answer` e `citations`. Os chunks completos e os erros de tools permanecem internos. As falhas do Gemini (429 de cota, 503 de sobrecarga) devolvem HTTP `503` com o motivo original, para que um problema de cota nunca seja confundido com falta de evidência.
 - `/ask` pode consumir chamadas extras ao Gemini no juiz de sanidade e em uma reescrita única depois que já existe uma resposta candidata. Se o juiz ou a reescrita esgotarem a cota ou falharem por outro motivo upstream, o endpoint devolve HTTP `503` mesmo quando já havia uma resposta candidata.
 - `GEMINI_API_KEY` é obrigatória na hora da requisição (`503` se estiver ausente). Importar a aplicação não abre a rede nem o banco.
